@@ -60,13 +60,18 @@ func (r *Registry) AddSecret(secret *corev1.Secret) error {
 	// Get public key from secret
 	publicKeyData, ok := secret.Data[DevboxPublicKeyField]
 	if !ok {
-		return fmt.Errorf("secret %s/%s missing %s", secret.Namespace, secret.Name, DevboxPublicKeyField)
+		return fmt.Errorf(
+			"secret %s/%s missing %s",
+			secret.Namespace,
+			secret.Name,
+			DevboxPublicKeyField,
+		)
 	}
 
 	// Parse public key
 	publicKey, _, _, _, err := ssh.ParseAuthorizedKey(publicKeyData)
 	if err != nil {
-		return fmt.Errorf("failed to parse public key: %v", err)
+		return fmt.Errorf("failed to parse public key: %w", err)
 	}
 
 	// Calculate fingerprint
@@ -83,7 +88,12 @@ func (r *Registry) AddSecret(secret *corev1.Secret) error {
 	if privateKeyData, ok := secret.Data[DevboxPrivateKeyField]; ok {
 		privateKey, err = ssh.ParsePrivateKey(privateKeyData)
 		if err != nil {
-			log.Printf("Warning: failed to parse private key for %s/%s: %v", secret.Namespace, devboxName, err)
+			log.Printf(
+				"Warning: failed to parse private key for %s/%s: %v",
+				secret.Namespace,
+				devboxName,
+				err,
+			)
 		}
 	}
 
@@ -91,6 +101,7 @@ func (r *Registry) AddSecret(secret *corev1.Secret) error {
 	defer r.mu.Unlock()
 
 	key := fmt.Sprintf("%s/%s", secret.Namespace, devboxName)
+
 	info, exists := r.devboxToInfo[key]
 	if !exists {
 		info = &DevboxInfo{
@@ -106,6 +117,7 @@ func (r *Registry) AddSecret(secret *corev1.Secret) error {
 	r.fingerprintToDevbox[fingerprint] = info
 
 	log.Printf("Added secret %s/%s with fingerprint %s", secret.Namespace, devboxName, fingerprint)
+
 	return nil
 }
 
@@ -149,6 +161,7 @@ func (r *Registry) UpdatePod(pod *corev1.Pod) error {
 	defer r.mu.Unlock()
 
 	key := fmt.Sprintf("%s/%s", pod.Namespace, devboxName)
+
 	info, exists := r.devboxToInfo[key]
 	if !exists {
 		info = &DevboxInfo{
@@ -160,6 +173,7 @@ func (r *Registry) UpdatePod(pod *corev1.Pod) error {
 
 	info.PodIP = pod.Status.PodIP
 	log.Printf("Updated pod IP for %s/%s: %s", pod.Namespace, devboxName, pod.Status.PodIP)
+
 	return nil
 }
 
@@ -176,6 +190,7 @@ func (r *Registry) DeletePod(pod *corev1.Pod) {
 	key := fmt.Sprintf("%s/%s", pod.Namespace, devboxName)
 	if info, ok := r.devboxToInfo[key]; ok {
 		info.PodIP = ""
+
 		log.Printf("Removed pod IP for %s/%s", pod.Namespace, devboxName)
 	}
 }
@@ -186,6 +201,18 @@ func (r *Registry) GetByFingerprint(fingerprint string) (*DevboxInfo, bool) {
 	defer r.mu.RUnlock()
 
 	info, ok := r.fingerprintToDevbox[fingerprint]
+
+	return info, ok
+}
+
+// GetDevboxInfo retrieves DevboxInfo by namespace and devbox name
+func (r *Registry) GetDevboxInfo(namespace, devboxName string) (*DevboxInfo, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	key := fmt.Sprintf("%s/%s", namespace, devboxName)
+	info, ok := r.devboxToInfo[key]
+
 	return info, ok
 }
 
@@ -195,5 +222,6 @@ func getDevboxNameFromOwnerReferences(refs []metav1.OwnerReference) string {
 			return ref.Name
 		}
 	}
+
 	return ""
 }

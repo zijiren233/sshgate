@@ -1,4 +1,4 @@
-package registry
+package registry_test
 
 import (
 	"crypto/ed25519"
@@ -6,12 +6,13 @@ import (
 	"encoding/pem"
 	"testing"
 
+	"github.com/zijiren233/sshgate/registry"
 	"golang.org/x/crypto/ssh"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-func generateTestKeyPair(t *testing.T) (ssh.PublicKey, ssh.Signer, []byte, []byte) {
+func generateTestKeyPair(t *testing.T) (ssh.PublicKey, []byte, []byte) {
 	t.Helper()
 
 	pub, priv, err := ed25519.GenerateKey(rand.Reader)
@@ -24,11 +25,6 @@ func generateTestKeyPair(t *testing.T) (ssh.PublicKey, ssh.Signer, []byte, []byt
 		t.Fatalf("Failed to create SSH public key: %v", err)
 	}
 
-	sshPriv, err := ssh.NewSignerFromKey(priv)
-	if err != nil {
-		t.Fatalf("Failed to create SSH signer: %v", err)
-	}
-
 	// Marshal keys for storage in secret
 	pubBytes := ssh.MarshalAuthorizedKey(sshPub)
 
@@ -36,27 +32,22 @@ func generateTestKeyPair(t *testing.T) (ssh.PublicKey, ssh.Signer, []byte, []byt
 	if err != nil {
 		t.Fatalf("Failed to marshal private key: %v", err)
 	}
+
 	privBytes := pem.EncodeToMemory(privPEM)
 
-	return sshPub, sshPriv, pubBytes, privBytes
+	return sshPub, pubBytes, privBytes
 }
 
 func TestNew(t *testing.T) {
-	r := New()
+	r := registry.New()
 	if r == nil {
 		t.Fatal("New() returned nil")
-	}
-	if r.fingerprintToDevbox == nil {
-		t.Error("fingerprintToDevbox map not initialized")
-	}
-	if r.devboxToInfo == nil {
-		t.Error("devboxToInfo map not initialized")
 	}
 }
 
 func TestAddSecret(t *testing.T) {
-	r := New()
-	pubKey, _, pubBytes, privBytes := generateTestKeyPair(t)
+	r := registry.New()
+	pubKey, pubBytes, privBytes := generateTestKeyPair(t)
 
 	tests := []struct {
 		name    string
@@ -70,18 +61,18 @@ func TestAddSecret(t *testing.T) {
 					Name:      "test-secret",
 					Namespace: "test-ns",
 					Labels: map[string]string{
-						DevboxPartOfLabel: DevboxPartOfValue,
+						registry.DevboxPartOfLabel: registry.DevboxPartOfValue,
 					},
 					OwnerReferences: []metav1.OwnerReference{
 						{
-							Kind: DevboxOwnerKind,
+							Kind: registry.DevboxOwnerKind,
 							Name: "test-devbox",
 						},
 					},
 				},
 				Data: map[string][]byte{
-					DevboxPublicKeyField:  pubBytes,
-					DevboxPrivateKeyField: privBytes,
+					registry.DevboxPublicKeyField:  pubBytes,
+					registry.DevboxPrivateKeyField: privBytes,
 				},
 			},
 			wantErr: false,
@@ -104,7 +95,7 @@ func TestAddSecret(t *testing.T) {
 					Name:      "bad-secret",
 					Namespace: "test-ns",
 					Labels: map[string]string{
-						DevboxPartOfLabel: DevboxPartOfValue,
+						registry.DevboxPartOfLabel: registry.DevboxPartOfValue,
 					},
 				},
 				Data: map[string][]byte{},
@@ -124,39 +115,42 @@ func TestAddSecret(t *testing.T) {
 
 	// Verify the valid secret was added
 	fingerprint := ssh.FingerprintSHA256(pubKey)
+
 	info, ok := r.GetByFingerprint(fingerprint)
 	if !ok {
 		t.Fatal("Failed to get devbox by fingerprint")
 	}
+
 	if info.Namespace != "test-ns" {
 		t.Errorf("Namespace = %s, want test-ns", info.Namespace)
 	}
+
 	if info.DevboxName != "test-devbox" {
 		t.Errorf("DevboxName = %s, want test-devbox", info.DevboxName)
 	}
 }
 
 func TestDeleteSecret(t *testing.T) {
-	r := New()
-	_, _, pubBytes, privBytes := generateTestKeyPair(t)
+	r := registry.New()
+	_, pubBytes, privBytes := generateTestKeyPair(t)
 
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-secret",
 			Namespace: "test-ns",
 			Labels: map[string]string{
-				DevboxPartOfLabel: DevboxPartOfValue,
+				registry.DevboxPartOfLabel: registry.DevboxPartOfValue,
 			},
 			OwnerReferences: []metav1.OwnerReference{
 				{
-					Kind: DevboxOwnerKind,
+					Kind: registry.DevboxOwnerKind,
 					Name: "test-devbox",
 				},
 			},
 		},
 		Data: map[string][]byte{
-			DevboxPublicKeyField:  pubBytes,
-			DevboxPrivateKeyField: privBytes,
+			registry.DevboxPublicKeyField:  pubBytes,
+			registry.DevboxPrivateKeyField: privBytes,
 		},
 	}
 
@@ -170,6 +164,7 @@ func TestDeleteSecret(t *testing.T) {
 
 	// Verify it's deleted
 	pubKey, _, _, _, _ := ssh.ParseAuthorizedKey(pubBytes)
+
 	fingerprint := ssh.FingerprintSHA256(pubKey)
 	if _, ok := r.GetByFingerprint(fingerprint); ok {
 		t.Error("Secret was not deleted from registry")
@@ -177,7 +172,7 @@ func TestDeleteSecret(t *testing.T) {
 }
 
 func TestUpdatePod(t *testing.T) {
-	r := New()
+	r := registry.New()
 
 	tests := []struct {
 		name    string
@@ -192,11 +187,11 @@ func TestUpdatePod(t *testing.T) {
 					Name:      "test-pod",
 					Namespace: "test-ns",
 					Labels: map[string]string{
-						DevboxPartOfLabel: DevboxPartOfValue,
+						registry.DevboxPartOfLabel: registry.DevboxPartOfValue,
 					},
 					OwnerReferences: []metav1.OwnerReference{
 						{
-							Kind: DevboxOwnerKind,
+							Kind: registry.DevboxOwnerKind,
 							Name: "test-devbox",
 						},
 					},
@@ -215,11 +210,11 @@ func TestUpdatePod(t *testing.T) {
 					Name:      "pending-pod",
 					Namespace: "test-ns",
 					Labels: map[string]string{
-						DevboxPartOfLabel: DevboxPartOfValue,
+						registry.DevboxPartOfLabel: registry.DevboxPartOfValue,
 					},
 					OwnerReferences: []metav1.OwnerReference{
 						{
-							Kind: DevboxOwnerKind,
+							Kind: registry.DevboxOwnerKind,
 							Name: "pending-devbox",
 						},
 					},
@@ -241,11 +236,8 @@ func TestUpdatePod(t *testing.T) {
 			}
 
 			if tt.wantIP != "" {
-				key := "test-ns/test-devbox"
-				r.mu.RLock()
-				info, ok := r.devboxToInfo[key]
-				r.mu.RUnlock()
-
+				// Verify the pod IP was updated using public API
+				info, ok := r.GetDevboxInfo("test-ns", "test-devbox")
 				if !ok {
 					t.Error("DevboxInfo not found after UpdatePod")
 				} else if info.PodIP != tt.wantIP {
@@ -257,26 +249,26 @@ func TestUpdatePod(t *testing.T) {
 }
 
 func TestGetByFingerprint(t *testing.T) {
-	r := New()
-	pubKey, _, pubBytes, privBytes := generateTestKeyPair(t)
+	r := registry.New()
+	pubKey, pubBytes, privBytes := generateTestKeyPair(t)
 
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-secret",
 			Namespace: "test-ns",
 			Labels: map[string]string{
-				DevboxPartOfLabel: DevboxPartOfValue,
+				registry.DevboxPartOfLabel: registry.DevboxPartOfValue,
 			},
 			OwnerReferences: []metav1.OwnerReference{
 				{
-					Kind: DevboxOwnerKind,
+					Kind: registry.DevboxOwnerKind,
 					Name: "test-devbox",
 				},
 			},
 		},
 		Data: map[string][]byte{
-			DevboxPublicKeyField:  pubBytes,
-			DevboxPrivateKeyField: privBytes,
+			registry.DevboxPublicKeyField:  pubBytes,
+			registry.DevboxPrivateKeyField: privBytes,
 		},
 	}
 
@@ -291,6 +283,7 @@ func TestGetByFingerprint(t *testing.T) {
 	if !ok {
 		t.Fatal("GetByFingerprint() returned false for existing fingerprint")
 	}
+
 	if info.DevboxName != "test-devbox" {
 		t.Errorf("DevboxName = %s, want test-devbox", info.DevboxName)
 	}
@@ -303,40 +296,43 @@ func TestGetByFingerprint(t *testing.T) {
 }
 
 func TestConcurrentAccess(t *testing.T) {
-	r := New()
-	_, _, pubBytes, privBytes := generateTestKeyPair(t)
+	r := registry.New()
+	_, pubBytes, privBytes := generateTestKeyPair(t)
 
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-secret",
 			Namespace: "test-ns",
 			Labels: map[string]string{
-				DevboxPartOfLabel: DevboxPartOfValue,
+				registry.DevboxPartOfLabel: registry.DevboxPartOfValue,
 			},
 			OwnerReferences: []metav1.OwnerReference{
 				{
-					Kind: DevboxOwnerKind,
+					Kind: registry.DevboxOwnerKind,
 					Name: "test-devbox",
 				},
 			},
 		},
 		Data: map[string][]byte{
-			DevboxPublicKeyField:  pubBytes,
-			DevboxPrivateKeyField: privBytes,
+			registry.DevboxPublicKeyField:  pubBytes,
+			registry.DevboxPrivateKeyField: privBytes,
 		},
 	}
 
 	// Concurrent writes
 	done := make(chan bool, 10)
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		go func() {
-			r.AddSecret(secret)
+			if err := r.AddSecret(secret); err != nil {
+				t.Errorf("AddSecret failed: %v", err)
+			}
+
 			done <- true
 		}()
 	}
 
 	// Wait for all goroutines
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		<-done
 	}
 
@@ -344,14 +340,15 @@ func TestConcurrentAccess(t *testing.T) {
 	pubKey, _, _, _, _ := ssh.ParseAuthorizedKey(pubBytes)
 	fingerprint := ssh.FingerprintSHA256(pubKey)
 
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		go func() {
 			r.GetByFingerprint(fingerprint)
+
 			done <- true
 		}()
 	}
 
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		<-done
 	}
 }

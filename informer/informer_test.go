@@ -1,4 +1,4 @@
-package informer
+package informer_test
 
 import (
 	"context"
@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/zijiren233/sshgate/informer"
 	"github.com/zijiren233/sshgate/registry"
 	"golang.org/x/crypto/ssh"
 	corev1 "k8s.io/api/core/v1"
@@ -36,6 +37,7 @@ func generateTestKeys(t *testing.T) ([]byte, []byte) {
 	if err != nil {
 		t.Fatalf("Failed to marshal private key: %v", err)
 	}
+
 	privBytes := pem.EncodeToMemory(privPEM)
 
 	return pubBytes, privBytes
@@ -45,26 +47,17 @@ func TestNew(t *testing.T) {
 	clientset := fake.NewSimpleClientset()
 	reg := registry.New()
 
-	mgr := New(clientset, reg)
+	mgr := informer.New(clientset, reg)
 
 	if mgr == nil {
 		t.Fatal("New() returned nil")
 	}
-	if mgr.clientset == nil {
-		t.Error("clientset is nil")
-	}
-	if mgr.registry == nil {
-		t.Error("registry is nil")
-	}
-	if mgr.stopCh == nil {
-		t.Error("stopCh is nil")
-	}
 }
 
-func TestHandleSecretAdd(t *testing.T) {
+func TestProcessSecretAdd(t *testing.T) {
 	clientset := fake.NewSimpleClientset()
 	reg := registry.New()
-	mgr := New(clientset, reg)
+	mgr := informer.New(clientset, reg)
 
 	pubBytes, privBytes := generateTestKeys(t)
 
@@ -88,8 +81,10 @@ func TestHandleSecretAdd(t *testing.T) {
 		},
 	}
 
-	// Test add handler
-	mgr.handleSecretAdd(secret)
+	// Process secret add
+	if err := mgr.ProcessSecret(secret, "add"); err != nil {
+		t.Fatalf("ProcessSecret failed: %v", err)
+	}
 
 	// Verify secret was added to registry
 	pubKey, _, _, _, _ := ssh.ParseAuthorizedKey(pubBytes)
@@ -99,15 +94,16 @@ func TestHandleSecretAdd(t *testing.T) {
 	if !ok {
 		t.Fatal("Secret was not added to registry")
 	}
+
 	if info.DevboxName != "test-devbox" {
 		t.Errorf("DevboxName = %s, want test-devbox", info.DevboxName)
 	}
 }
 
-func TestHandleSecretUpdate(t *testing.T) {
+func TestProcessSecretUpdate(t *testing.T) {
 	clientset := fake.NewSimpleClientset()
 	reg := registry.New()
-	mgr := New(clientset, reg)
+	mgr := informer.New(clientset, reg)
 
 	pubBytes, privBytes := generateTestKeys(t)
 
@@ -131,8 +127,10 @@ func TestHandleSecretUpdate(t *testing.T) {
 		},
 	}
 
-	// Test update handler
-	mgr.handleSecretUpdate(nil, secret)
+	// Process secret update
+	if err := mgr.ProcessSecret(secret, "update"); err != nil {
+		t.Fatalf("ProcessSecret failed: %v", err)
+	}
 
 	// Verify secret was updated in registry
 	pubKey, _, _, _, _ := ssh.ParseAuthorizedKey(pubBytes)
@@ -144,10 +142,10 @@ func TestHandleSecretUpdate(t *testing.T) {
 	}
 }
 
-func TestHandleSecretDelete(t *testing.T) {
+func TestProcessSecretDelete(t *testing.T) {
 	clientset := fake.NewSimpleClientset()
 	reg := registry.New()
-	mgr := New(clientset, reg)
+	mgr := informer.New(clientset, reg)
 
 	pubBytes, privBytes := generateTestKeys(t)
 
@@ -172,7 +170,9 @@ func TestHandleSecretDelete(t *testing.T) {
 	}
 
 	// Add first
-	mgr.handleSecretAdd(secret)
+	if err := mgr.ProcessSecret(secret, "add"); err != nil {
+		t.Fatalf("ProcessSecret failed: %v", err)
+	}
 
 	pubKey, _, _, _, _ := ssh.ParseAuthorizedKey(pubBytes)
 	fingerprint := ssh.FingerprintSHA256(pubKey)
@@ -184,7 +184,9 @@ func TestHandleSecretDelete(t *testing.T) {
 	}
 
 	// Delete
-	mgr.handleSecretDelete(secret)
+	if err := mgr.ProcessSecret(secret, "delete"); err != nil {
+		t.Fatalf("ProcessSecret failed: %v", err)
+	}
 
 	// Verify it's deleted
 	_, ok = reg.GetByFingerprint(fingerprint)
@@ -193,10 +195,10 @@ func TestHandleSecretDelete(t *testing.T) {
 	}
 }
 
-func TestHandlePodAdd(t *testing.T) {
+func TestProcessPodAdd(t *testing.T) {
 	clientset := fake.NewSimpleClientset()
 	reg := registry.New()
-	mgr := New(clientset, reg)
+	mgr := informer.New(clientset, reg)
 
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
@@ -217,17 +219,26 @@ func TestHandlePodAdd(t *testing.T) {
 		},
 	}
 
-	// Test add handler
-	mgr.handlePodAdd(pod)
+	// Process pod add
+	if err := mgr.ProcessPod(pod, "add"); err != nil {
+		t.Fatalf("ProcessPod failed: %v", err)
+	}
 
-	// Verify pod was added (check internal state if accessible)
-	// For now, we just verify no error occurred
+	// Verify pod was added
+	info, ok := reg.GetDevboxInfo("test-ns", "test-devbox")
+	if !ok {
+		t.Fatal("DevboxInfo not found after ProcessPod")
+	}
+
+	if info.PodIP != "10.0.0.1" {
+		t.Errorf("PodIP = %s, want 10.0.0.1", info.PodIP)
+	}
 }
 
-func TestHandlePodUpdate(t *testing.T) {
+func TestProcessPodUpdate(t *testing.T) {
 	clientset := fake.NewSimpleClientset()
 	reg := registry.New()
-	mgr := New(clientset, reg)
+	mgr := informer.New(clientset, reg)
 
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
@@ -248,9 +259,20 @@ func TestHandlePodUpdate(t *testing.T) {
 		},
 	}
 
-	// Test update handler
-	mgr.handlePodUpdate(nil, pod)
-	// Verify no error occurred
+	// Process pod update
+	if err := mgr.ProcessPod(pod, "update"); err != nil {
+		t.Fatalf("ProcessPod failed: %v", err)
+	}
+
+	// Verify pod was updated
+	info, ok := reg.GetDevboxInfo("test-ns", "test-devbox")
+	if !ok {
+		t.Fatal("DevboxInfo not found after ProcessPod")
+	}
+
+	if info.PodIP != "10.0.0.2" {
+		t.Errorf("PodIP = %s, want 10.0.0.2", info.PodIP)
+	}
 }
 
 func TestStart(t *testing.T) {
@@ -258,15 +280,23 @@ func TestStart(t *testing.T) {
 	clientset := fake.NewSimpleClientset()
 
 	// Add reactor to handle list operations
-	clientset.PrependReactor("list", "secrets", func(action k8stesting.Action) (bool, runtime.Object, error) {
-		return true, &corev1.SecretList{}, nil
-	})
-	clientset.PrependReactor("list", "pods", func(action k8stesting.Action) (bool, runtime.Object, error) {
-		return true, &corev1.PodList{}, nil
-	})
+	clientset.PrependReactor(
+		"list",
+		"secrets",
+		func(action k8stesting.Action) (bool, runtime.Object, error) {
+			return true, &corev1.SecretList{}, nil
+		},
+	)
+	clientset.PrependReactor(
+		"list",
+		"pods",
+		func(action k8stesting.Action) (bool, runtime.Object, error) {
+			return true, &corev1.PodList{}, nil
+		},
+	)
 
 	reg := registry.New()
-	mgr := New(clientset, reg)
+	mgr := informer.New(clientset, reg)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -287,26 +317,28 @@ func TestStart(t *testing.T) {
 		t.Error("Start() timed out")
 	}
 
-	// Verify factory was created
-	if mgr.factory == nil {
-		t.Error("factory was not initialized")
+	// Verify manager is started
+	if !mgr.IsStarted() {
+		t.Error("Manager not started after Start()")
 	}
 }
 
 func TestStop(t *testing.T) {
 	clientset := fake.NewSimpleClientset()
 	reg := registry.New()
-	mgr := New(clientset, reg)
+	mgr := informer.New(clientset, reg)
+
+	// Verify not stopped initially
+	if mgr.IsStopped() {
+		t.Error("Manager should not be stopped initially")
+	}
 
 	// Test that Stop doesn't panic
 	mgr.Stop()
 
-	// Verify stopCh is closed
-	select {
-	case <-mgr.stopCh:
-		// Channel closed as expected
-	case <-time.After(100 * time.Millisecond):
-		t.Error("stopCh was not closed")
+	// Verify stopped after calling Stop
+	if !mgr.IsStopped() {
+		t.Error("Manager not stopped after Stop()")
 	}
 }
 
@@ -356,15 +388,23 @@ func TestStartWithExistingResources(t *testing.T) {
 	clientset := fake.NewSimpleClientset(secret, pod)
 
 	// Add reactors for list operations
-	clientset.PrependReactor("list", "secrets", func(action k8stesting.Action) (bool, runtime.Object, error) {
-		return true, &corev1.SecretList{Items: []corev1.Secret{*secret}}, nil
-	})
-	clientset.PrependReactor("list", "pods", func(action k8stesting.Action) (bool, runtime.Object, error) {
-		return true, &corev1.PodList{Items: []corev1.Pod{*pod}}, nil
-	})
+	clientset.PrependReactor(
+		"list",
+		"secrets",
+		func(action k8stesting.Action) (bool, runtime.Object, error) {
+			return true, &corev1.SecretList{Items: []corev1.Secret{*secret}}, nil
+		},
+	)
+	clientset.PrependReactor(
+		"list",
+		"pods",
+		func(action k8stesting.Action) (bool, runtime.Object, error) {
+			return true, &corev1.PodList{Items: []corev1.Pod{*pod}}, nil
+		},
+	)
 
 	reg := registry.New()
-	mgr := New(clientset, reg)
+	mgr := informer.New(clientset, reg)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -375,8 +415,8 @@ func TestStartWithExistingResources(t *testing.T) {
 		t.Errorf("Start() failed: %v", err)
 	}
 
-	// Verify factory was created
-	if mgr.factory == nil {
-		t.Error("factory was not initialized")
+	// Verify manager is started
+	if !mgr.IsStarted() {
+		t.Error("Manager not started after Start()")
 	}
 }

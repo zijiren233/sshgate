@@ -29,6 +29,7 @@ func New(hostKey ssh.Signer, reg *registry.Registry) *Gateway {
 	sshConfig.AddHostKey(hostKey)
 
 	gw.config = sshConfig
+
 	return gw
 }
 
@@ -99,7 +100,7 @@ func (g *Gateway) HandleConnection(nConn net.Conn) {
 	)
 
 	// Connect to backend pod
-	backendAddr := fmt.Sprintf("%s:22", info.PodIP)
+	backendAddr := info.PodIP + ":22"
 
 	// Use the devbox's private key to connect
 	auth := []ssh.AuthMethod{
@@ -107,8 +108,9 @@ func (g *Gateway) HandleConnection(nConn net.Conn) {
 	}
 
 	backendConfig := &ssh.ClientConfig{
-		User:            username,
-		Auth:            auth,
+		User: username,
+		Auth: auth,
+		// #nosec G106 -- We trust the backend pods within our cluster
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 		Timeout:         10 * time.Second,
 	}
@@ -136,8 +138,11 @@ func handleGlobalRequests(reqs <-chan *ssh.Request, backendConn *ssh.Client) {
 		case "tcpip-forward", "cancel-tcpip-forward":
 			// Reject remote port forwarding requests
 			if req.WantReply {
-				req.Reply(false, nil)
+				if err := req.Reply(false, nil); err != nil {
+					log.Printf("Error replying to request: %v", err)
+				}
 			}
+
 			log.Printf("Rejected remote port forwarding request: %s", req.Type)
 		default:
 			// Forward other global requests to backend
@@ -145,13 +150,20 @@ func handleGlobalRequests(reqs <-chan *ssh.Request, backendConn *ssh.Client) {
 			ok, response, err := backendConn.SendRequest(req.Type, req.WantReply, req.Payload)
 			if err != nil {
 				log.Printf("Error forwarding global request %s: %v", req.Type, err)
+
 				if req.WantReply {
-					req.Reply(false, nil)
+					if err := req.Reply(false, nil); err != nil {
+						log.Printf("Error replying to request: %v", err)
+					}
 				}
+
 				return
 			}
+
 			if req.WantReply {
-				req.Reply(ok, response)
+				if err := req.Reply(ok, response); err != nil {
+					log.Printf("Error replying to request: %v", err)
+				}
 			}
 		}
 	}
@@ -164,7 +176,9 @@ func handleChannel(newChannel ssh.NewChannel, backendConn *ssh.Client) {
 		newChannel.ExtraData(),
 	)
 	if err != nil {
-		newChannel.Reject(ssh.ConnectionFailed, err.Error())
+		if err := newChannel.Reject(ssh.ConnectionFailed, err.Error()); err != nil {
+			log.Printf("Error rejecting channel: %v", err)
+		}
 		return
 	}
 
@@ -179,16 +193,26 @@ func handleChannel(newChannel ssh.NewChannel, backendConn *ssh.Client) {
 	go proxyRequests(backendReqs, channel)
 
 	// Bidirectional proxy for data
-	go io.Copy(channel, backendChannel)
-	io.Copy(backendChannel, channel)
+	go func() {
+		if _, err := io.Copy(channel, backendChannel); err != nil {
+			log.Printf("Error copying data from backend to client: %v", err)
+		}
+	}()
+
+	if _, err := io.Copy(backendChannel, channel); err != nil {
+		log.Printf("Error copying data from client to backend: %v", err)
+	}
 }
 
 func proxyRequests(in <-chan *ssh.Request, out ssh.Channel) {
 	for req := range in {
 		ok, err := out.SendRequest(req.Type, req.WantReply, req.Payload)
 		if req.WantReply {
-			req.Reply(ok, nil)
+			if err := req.Reply(ok, nil); err != nil {
+				log.Printf("Error replying to request: %v", err)
+			}
 		}
+
 		if err != nil {
 			return
 		}

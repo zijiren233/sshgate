@@ -19,7 +19,7 @@ on:
       - "**/*.yaml"
 
 jobs:
-  golangci-linn:
+  golangci-lint:
     name: Lint
     runs-on: ubuntu-24.04
     steps:

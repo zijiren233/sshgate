@@ -1,10 +1,10 @@
-package hostkey
+package hostkey_test
 
 import (
-	"os"
 	"strings"
 	"testing"
 
+	"github.com/zijiren233/sshgate/hostkey"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -12,12 +12,12 @@ func TestGenerateDeterministicKey(t *testing.T) {
 	seed := "test-seed-123"
 
 	// Generate key twice with same seed
-	signer1, err := generateDeterministicKey(seed)
+	signer1, err := hostkey.GenerateDeterministicKey(seed)
 	if err != nil {
 		t.Fatalf("Failed to generate key: %v", err)
 	}
 
-	signer2, err := generateDeterministicKey(seed)
+	signer2, err := hostkey.GenerateDeterministicKey(seed)
 	if err != nil {
 		t.Fatalf("Failed to generate key: %v", err)
 	}
@@ -37,12 +37,12 @@ func TestGenerateDeterministicKey(t *testing.T) {
 }
 
 func TestGenerateDeterministicKeyDifferentSeeds(t *testing.T) {
-	signer1, err := generateDeterministicKey("seed1")
+	signer1, err := hostkey.GenerateDeterministicKey("seed1")
 	if err != nil {
 		t.Fatalf("Failed to generate key: %v", err)
 	}
 
-	signer2, err := generateDeterministicKey("seed2")
+	signer2, err := hostkey.GenerateDeterministicKey("seed2")
 	if err != nil {
 		t.Fatalf("Failed to generate key: %v", err)
 	}
@@ -57,10 +57,9 @@ func TestGenerateDeterministicKeyDifferentSeeds(t *testing.T) {
 
 func TestLoad(t *testing.T) {
 	// Test with custom seed
-	os.Setenv("SSH_HOST_KEY_SEED", "test-seed")
-	defer os.Unsetenv("SSH_HOST_KEY_SEED")
+	t.Setenv("SSH_HOST_KEY_SEED", "test-seed")
 
-	signer, err := Load()
+	signer, err := hostkey.Load()
 	if err != nil {
 		t.Fatalf("Load() failed: %v", err)
 	}
@@ -78,15 +77,15 @@ func TestLoad(t *testing.T) {
 
 func TestLoadDefaultSeed(t *testing.T) {
 	// Ensure no custom seed is set
-	os.Unsetenv("SSH_HOST_KEY_SEED")
+	t.Setenv("SSH_HOST_KEY_SEED", "")
 
-	signer1, err := Load()
+	signer1, err := hostkey.Load()
 	if err != nil {
 		t.Fatalf("Load() failed: %v", err)
 	}
 
 	// Load again to verify consistency
-	signer2, err := Load()
+	signer2, err := hostkey.Load()
 	if err != nil {
 		t.Fatalf("Load() failed: %v", err)
 	}
@@ -100,12 +99,12 @@ func TestLoadDefaultSeed(t *testing.T) {
 }
 
 func TestGetFingerprint(t *testing.T) {
-	signer, err := generateDeterministicKey("test")
+	signer, err := hostkey.GenerateDeterministicKey("test")
 	if err != nil {
 		t.Fatalf("Failed to generate key: %v", err)
 	}
 
-	fp := GetFingerprint(signer)
+	fp := hostkey.GetFingerprint(signer)
 	if !strings.HasPrefix(fp, "SHA256:") {
 		t.Errorf("GetFingerprint() returned invalid format: %s", fp)
 	}
@@ -118,7 +117,7 @@ func TestGetFingerprint(t *testing.T) {
 }
 
 func TestKeyType(t *testing.T) {
-	signer, err := generateDeterministicKey("test")
+	signer, err := hostkey.GenerateDeterministicKey("test")
 	if err != nil {
 		t.Fatalf("Failed to generate key: %v", err)
 	}
