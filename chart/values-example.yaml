@@ -1,0 +1,57 @@
+# Example values file for SSH Gateway
+# Copy this file and customize it for your deployment
+
+# SSH port exposed on each node
+sshPort: 2222
+
+# SSH Host Key Seed - IMPORTANT: Keep this secure!
+# If empty (default), a random 32-character seed will be auto-generated on first install
+# The seed is preserved during upgrades (stored in ConfigMap)
+# Only set this if you need a specific seed (e.g., for disaster recovery)
+sshHostKeySeed: ""
+# Example: Set a custom seed
+# sshHostKeySeed: "my-custom-seed-change-me"
+
+# Container image configuration
+image:
+  repository: ghcr.io/zijiren233/sshgate
+  tag: "latest"
+  pullPolicy: IfNotPresent
+
+# Additional environment variables injected via ConfigMap
+# These will be available to the SSH gateway application
+env:
+  # Example: Set log level
+  # LOG_LEVEL: "debug"
+  #
+  # Example: Custom configuration
+  # CUSTOM_VAR: "value"
+
+# Node selector - deploy only on specific nodes
+# Example: Only run on nodes labeled with role=gateway
+nodeSelector: {}
+  # role: gateway
+
+# Tolerations - allow running on nodes with specific taints
+# Example: Run on master nodes
+tolerations: []
+  # - key: node-role.kubernetes.io/master
+  #   effect: NoSchedule
+
+# Resource limits and requests
+resources: {}
+  # limits:
+  #   cpu: 500m
+  #   memory: 256Mi
+  # requests:
+  #   cpu: 100m
+  #   memory: 128Mi
+
+# RBAC configuration
+rbac:
+  create: true
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
