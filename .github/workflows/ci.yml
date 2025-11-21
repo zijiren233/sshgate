@@ -19,8 +19,8 @@ on:
       - "**/*.yaml"
 
 jobs:
-  golangci-lint-aiproxy:
-    name: Lint AI Proxy
+  golangci-linn:
+    name: Lint
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
