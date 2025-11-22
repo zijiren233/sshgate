@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -24,7 +25,7 @@ func New(hostKey ssh.Signer, reg *registry.Registry) *Gateway {
 	}
 
 	sshConfig := &ssh.ServerConfig{
-		PublicKeyCallback: newPublicKeyCallback(reg),
+		PublicKeyCallback: NewPublicKeyCallback(reg),
 	}
 	sshConfig.AddHostKey(hostKey)
 
@@ -33,7 +34,50 @@ func New(hostKey ssh.Signer, reg *registry.Registry) *Gateway {
 	return gw
 }
 
-func newPublicKeyCallback(
+// Config returns the SSH server configuration.
+// This method is exposed for testing purposes.
+func (g *Gateway) Config() *ssh.ServerConfig {
+	return g.config
+}
+
+// GetDevboxInfoFromPermissions extracts DevboxInfo from SSH Permissions.
+// This function is exposed for testing purposes.
+func GetDevboxInfoFromPermissions(perms *ssh.Permissions) (*registry.DevboxInfo, error) {
+	if perms == nil {
+		return nil, errors.New("permissions is nil")
+	}
+
+	infoValue, ok := perms.ExtraData["devbox_info"]
+	if !ok {
+		return nil, errors.New("no devbox_info in permissions")
+	}
+
+	info, ok := infoValue.(*registry.DevboxInfo)
+	if !ok || info == nil {
+		return nil, errors.New("invalid devbox_info type in permissions")
+	}
+
+	return info, nil
+}
+
+// GetUsernameFromPermissions extracts username from SSH Permissions.
+// This function is exposed for testing purposes.
+func GetUsernameFromPermissions(perms *ssh.Permissions) (string, error) {
+	if perms == nil {
+		return "", errors.New("permissions is nil")
+	}
+
+	username, ok := perms.Extensions["username"]
+	if !ok {
+		return "", errors.New("no username in permissions")
+	}
+
+	return username, nil
+}
+
+// NewPublicKeyCallback creates a public key authentication callback for the SSH server.
+// This function is exposed for testing purposes.
+func NewPublicKeyCallback(
 	reg *registry.Registry,
 ) func(conn ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
 	return func(conn ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
@@ -59,8 +103,10 @@ func newPublicKeyCallback(
 
 		return &ssh.Permissions{
 			Extensions: map[string]string{
-				"fingerprint": fingerprint,
-				"username":    username,
+				"username": username,
+			},
+			ExtraData: map[any]any{
+				"devbox_info": info,
 			},
 		}, nil
 	}
@@ -76,13 +122,15 @@ func (g *Gateway) HandleConnection(nConn net.Conn) {
 	defer conn.Close()
 
 	// Get devbox info from permissions
-	fingerprint := conn.Permissions.Extensions["fingerprint"]
-	username := conn.Permissions.Extensions["username"]
+	info, err := GetDevboxInfoFromPermissions(conn.Permissions)
+	if err != nil {
+		log.Printf("Failed to get devbox info from permissions: %v", err)
+		return
+	}
 
-	// Look up devbox by fingerprint
-	info, ok := g.registry.GetByFingerprint(fingerprint)
-	if !ok {
-		log.Printf("No devbox found for fingerprint %s", fingerprint)
+	username, err := GetUsernameFromPermissions(conn.Permissions)
+	if err != nil {
+		log.Printf("Failed to get username from permissions: %v", err)
 		return
 	}
 
