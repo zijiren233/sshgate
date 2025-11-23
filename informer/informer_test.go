@@ -328,18 +328,21 @@ func TestStop(t *testing.T) {
 	reg := registry.New()
 	mgr := informer.New(clientset, reg)
 
-	// Verify not stopped initially
-	if mgr.IsStopped() {
-		t.Error("Manager should not be stopped initially")
-	}
-
-	// Test that Stop doesn't panic
+	// Test that Stop doesn't panic when manager is not started
 	mgr.Stop()
 
-	// Verify stopped after calling Stop
-	if !mgr.IsStopped() {
-		t.Error("Manager not stopped after Stop()")
+	// Start the manager
+	ctx := context.Background()
+
+	if err := mgr.Start(ctx); err != nil {
+		t.Fatalf("Failed to start manager: %v", err)
 	}
+
+	// Test that Stop doesn't panic when manager is started
+	mgr.Stop()
+
+	// Test that multiple Stop calls don't panic
+	mgr.Stop()
 }
 
 func TestStartWithExistingResources(t *testing.T) {

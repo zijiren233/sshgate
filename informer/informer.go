@@ -18,7 +18,7 @@ type Manager struct {
 	clientset kubernetes.Interface
 	registry  *registry.Registry
 	factory   informers.SharedInformerFactory
-	stopCh    chan struct{}
+	cancel    context.CancelFunc
 }
 
 // New creates a new informer manager
@@ -26,12 +26,14 @@ func New(clientset kubernetes.Interface, reg *registry.Registry) *Manager {
 	return &Manager{
 		clientset: clientset,
 		registry:  reg,
-		stopCh:    make(chan struct{}),
 	}
 }
 
 // Start initializes and starts all informers
 func (m *Manager) Start(ctx context.Context) error {
+	// Create a cancellable context for the informer lifecycle
+	ctx, m.cancel = context.WithCancel(ctx)
+
 	// Create informer factory
 	m.factory = informers.NewSharedInformerFactory(m.clientset, 30*time.Second)
 
@@ -74,22 +76,19 @@ func (m *Manager) Start(ctx context.Context) error {
 
 // Stop stops all informers
 func (m *Manager) Stop() {
-	close(m.stopCh)
+	if m.cancel != nil {
+		m.cancel()
+		m.cancel = nil
+	}
+
+	if m.factory != nil {
+		m.factory.Shutdown()
+	}
 }
 
 // IsStarted returns true if the manager has been started and factory is initialized
 func (m *Manager) IsStarted() bool {
 	return m.factory != nil
-}
-
-// IsStopped returns true if the stop channel has been closed
-func (m *Manager) IsStopped() bool {
-	select {
-	case <-m.stopCh:
-		return true
-	default:
-		return false
-	}
 }
 
 // ProcessSecret processes a secret (for testing)
