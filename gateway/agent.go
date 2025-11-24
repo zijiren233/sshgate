@@ -110,6 +110,8 @@ func (g *Gateway) handleSessionChannel(
 
 	// Connect to backend with agent authentication if available
 	backendConn, err := g.connectToBackend(ctx, sessionResult.AgentChannel)
+	// close agent channel
+	_ = sessionResult.AgentChannel.Close()
 	if err != nil {
 		log.Printf("[AgentForwarding] Failed to connect to backend: %v", err)
 		fmt.Fprintf(channel,
@@ -130,11 +132,8 @@ func (g *Gateway) handleSessionChannel(
 	}
 	defer backendChannel.Close()
 
-	// Setup agent forwarding if available
-	go g.setupAgentForwarding(sessionResult.AgentChannel, backendConn)
-
 	// Forward cached requests to backend
-	go g.forwardCachedRequests(sessionResult.CachedRequests, backendChannel)
+	g.forwardCachedRequests(sessionResult.CachedRequests, backendChannel)
 
 	// Proxy all remaining requests and data
 	go g.proxyRequests(requests, backendChannel)
@@ -170,7 +169,7 @@ func (g *Gateway) handleSessionRequests(
 	}
 
 	// Process requests until we've handled all initial setup requests
-	timeout := time.NewTimer(500 * time.Millisecond)
+	timeout := time.NewTimer(time.Second * 3)
 	defer timeout.Stop()
 
 	for {
@@ -198,6 +197,8 @@ func (g *Gateway) handleSessionRequests(
 				// an agent channel to the client immediately!
 				result.AgentChannel = g.createAgentChannelToClient(ctx)
 
+				result.CachedRequests = append(result.CachedRequests, req)
+
 				// Don't forward this request to backend - we handle it
 				return result
 			}
@@ -205,9 +206,10 @@ func (g *Gateway) handleSessionRequests(
 			// For all other request types, cache them for forwarding (max 6)
 			if len(result.CachedRequests) < 6 {
 				result.CachedRequests = append(result.CachedRequests, req)
+				timeout.Reset(time.Second)
 				continue
 			}
-			return result
+			return nil
 
 		case <-timeout.C:
 			// Timeout - stop processing initial requests
@@ -220,8 +222,6 @@ func (g *Gateway) handleSessionRequests(
 // This is the critical function for bastion host SSH agent forwarding
 // Returns the created agent channel or nil if failed
 func (g *Gateway) createAgentChannelToClient(ctx *sessionContext) ssh.Channel {
-	log.Printf("[AgentForwarding] Creating agent channel to client...")
-
 	// Use the client connection to open an agent channel
 	// This tells the client "I want to access your SSH agent"
 	agentChannel, agentReqs, err := ctx.conn.OpenChannel("auth-agent@openssh.com", nil)
@@ -250,7 +250,7 @@ func (g *Gateway) connectToBackend(
 		User:            ctx.realUser,
 		Auth:            []ssh.AuthMethod{ssh.PublicKeysCallback(agentClient.Signers)},
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
-		Timeout:         15 * time.Second,
+		Timeout:         5 * time.Second,
 	}
 
 	log.Printf(
@@ -265,26 +265,4 @@ func (g *Gateway) connectToBackend(
 	}
 
 	return conn, nil
-}
-
-// setupAgentForwarding establishes agent forwarding between client and backend
-func (g *Gateway) setupAgentForwarding(
-	clientAgentChannel ssh.Channel,
-	backendConn *ssh.Client,
-) {
-	// Open agent channel on backend connection
-	backendAgentChannel, backendReqs, err := backendConn.OpenChannel("auth-agent@openssh.com", nil)
-	if err != nil {
-		log.Printf("[AgentForwarding] Failed to open backend agent channel: %v", err)
-		clientAgentChannel.Close()
-		return
-	}
-
-	log.Printf("[AgentForwarding] ✓ Agent forwarding established between client and backend")
-
-	// Discard requests on backend channel
-	go ssh.DiscardRequests(backendReqs)
-
-	// Proxy data between client and backend agent channels
-	g.proxyChannel(clientAgentChannel, backendAgentChannel)
 }
