@@ -24,8 +24,7 @@ func New(hostKey ssh.Signer, reg *registry.Registry) *Gateway {
 	}
 
 	sshConfig := &ssh.ServerConfig{
-		NoClientAuth:      true,                 // Allow no-auth connections (Agent Forwarding mode)
-		PublicKeyCallback: gw.publicKeyCallback, // Public key authentication
+		PublicKeyCallback: gw.publicKeyCallback,
 	}
 	sshConfig.AddHostKey(hostKey)
 
@@ -46,11 +45,21 @@ func (g *Gateway) HandleConnection(nConn net.Conn) {
 
 	nConn.SetDeadline(time.Time{})
 
+	info, err := g.getDevboxInfoFromPermissions(conn.Permissions)
+	if err != nil {
+		log.Printf("[PublicKey] Failed to get devbox info: %v", err)
+		return
+	}
+
+	username := conn.Permissions.Extensions["username"]
+
 	// Determine authentication mode
 	authMode := g.determineAuthMode(conn)
 
 	log.Printf(
-		"[Connection] Established: user=%s, mode=%s, remote=%s",
+		"[Connection] Established: namespace=%s devbox=%s user=%s, mode=%s, remote=%s",
+		info.Namespace,
+		info.DevboxName,
 		conn.User(),
 		authMode,
 		conn.RemoteAddr(),
@@ -58,9 +67,9 @@ func (g *Gateway) HandleConnection(nConn net.Conn) {
 
 	switch authMode {
 	case AuthModePublicKey:
-		g.handlePublicKeyMode(conn, chans, reqs)
+		g.handlePublicKeyMode(conn, chans, reqs, info, username)
 	case AuthModeAgentForwarding:
-		g.handleAgentForwardingMode(conn, chans, reqs)
+		g.handleAgentForwardingMode(conn, chans, reqs, info, username)
 	default:
 		log.Printf("[Connection] Unknown auth mode, closing")
 	}

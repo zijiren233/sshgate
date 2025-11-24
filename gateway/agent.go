@@ -26,37 +26,13 @@ func (g *Gateway) handleAgentForwardingMode(
 	conn *ssh.ServerConn,
 	chans <-chan ssh.NewChannel,
 	reqs <-chan *ssh.Request,
+	info *registry.DevboxInfo,
+	username string,
 ) {
-	// Parse username: username.short_user_namespace-devboxname
-	realUser, fullNamespace, devboxName, err := g.parser.Parse(conn.User())
-	if err != nil {
-		log.Printf("[AgentForwarding] Invalid username format: %v", err)
-		return
-	}
-
-	info, ok := g.registry.GetDevboxInfo(fullNamespace, devboxName)
-	if !ok {
-		log.Printf("[AgentForwarding] Devbox not found: %s/%s", fullNamespace, devboxName)
-		return
-	}
-
-	if info.PodIP == "" {
-		log.Printf("[AgentForwarding] Devbox %s/%s has no pod IP", fullNamespace, devboxName)
-		return
-	}
-
-	log.Printf(
-		"[AgentForwarding] Routing to %s/%s at %s (user: %s)",
-		fullNamespace,
-		devboxName,
-		info.PodIP,
-		realUser,
-	)
-
 	ctx := &sessionContext{
 		conn:     conn,
 		info:     info,
-		realUser: realUser,
+		realUser: username,
 	}
 
 	go ssh.DiscardRequests(reqs)

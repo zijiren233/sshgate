@@ -4,6 +4,7 @@ import (
 	"log"
 	"time"
 
+	"github.com/zijiren233/sshgate/registry"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -11,32 +12,9 @@ func (g *Gateway) handlePublicKeyMode(
 	conn *ssh.ServerConn,
 	chans <-chan ssh.NewChannel,
 	reqs <-chan *ssh.Request,
+	info *registry.DevboxInfo,
+	username string,
 ) {
-	info, err := g.getDevboxInfoFromPermissions(conn.Permissions)
-	if err != nil {
-		log.Printf("[PublicKey] Failed to get devbox info: %v", err)
-		return
-	}
-
-	username := conn.Permissions.Extensions["username"]
-
-	if info.PodIP == "" {
-		log.Printf(
-			"[PublicKey] Devbox %s/%s has no pod IP",
-			info.Namespace,
-			info.DevboxName,
-		)
-		return
-	}
-
-	log.Printf(
-		"[PublicKey] Routing %s to %s/%s at %s",
-		username,
-		info.Namespace,
-		info.DevboxName,
-		info.PodIP,
-	)
-
 	backendAddr := info.PodIP + ":22"
 
 	backendConfig := &ssh.ClientConfig{
