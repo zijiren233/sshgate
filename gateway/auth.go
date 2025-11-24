@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"errors"
 	"fmt"
 	"log"
 
@@ -55,7 +56,7 @@ func (g *Gateway) publicKeyCallback(
 		info, ok := g.registry.GetDevboxInfo(fullNamespace, devboxName)
 		if !ok {
 			log.Printf("[Auth] Unknown public key: %s", fingerprint)
-			return nil, fmt.Errorf("unknown public key")
+			return nil, errors.New("unknown public key")
 		}
 
 		if info.PodIP == "" {
@@ -64,6 +65,7 @@ func (g *Gateway) publicKeyCallback(
 				info.Namespace,
 				info.DevboxName,
 			)
+
 			return nil, fmt.Errorf("devbox %s/%s not running",
 				info.Namespace,
 				info.DevboxName,
@@ -93,6 +95,7 @@ func (g *Gateway) publicKeyCallback(
 			info.Namespace,
 			info.DevboxName,
 		)
+
 		return nil, fmt.Errorf("devbox %s/%s not running",
 			info.Namespace,
 			info.DevboxName,
@@ -128,17 +131,17 @@ func (g *Gateway) getDevboxInfoFromPermissions(
 	perms *ssh.Permissions,
 ) (*registry.DevboxInfo, error) {
 	if perms == nil {
-		return nil, fmt.Errorf("permissions is nil")
+		return nil, errors.New("permissions is nil")
 	}
 
 	infoValue, ok := perms.ExtraData["devbox_info"]
 	if !ok {
-		return nil, fmt.Errorf("no devbox_info in permissions")
+		return nil, errors.New("no devbox_info in permissions")
 	}
 
 	info, ok := infoValue.(*registry.DevboxInfo)
 	if !ok || info == nil {
-		return nil, fmt.Errorf("invalid devbox_info type")
+		return nil, errors.New("invalid devbox_info type")
 	}
 
 	return info, nil
@@ -153,12 +156,12 @@ func GetDevboxInfoFromPermissions(perms *ssh.Permissions) (*registry.DevboxInfo,
 // GetUsernameFromPermissions is exported for testing
 func GetUsernameFromPermissions(perms *ssh.Permissions) (string, error) {
 	if perms == nil {
-		return "", fmt.Errorf("permissions is nil")
+		return "", errors.New("permissions is nil")
 	}
 
 	username, ok := perms.Extensions["username"]
 	if !ok {
-		return "", fmt.Errorf("no username in permissions")
+		return "", errors.New("no username in permissions")
 	}
 
 	return username, nil

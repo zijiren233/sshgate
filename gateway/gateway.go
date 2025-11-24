@@ -34,7 +34,7 @@ func New(hostKey ssh.Signer, reg *registry.Registry) *Gateway {
 }
 
 func (g *Gateway) HandleConnection(nConn net.Conn) {
-	nConn.SetDeadline(time.Now().Add(30 * time.Second))
+	_ = nConn.SetDeadline(time.Now().Add(15 * time.Second))
 
 	conn, chans, reqs, err := ssh.NewServerConn(nConn, g.config)
 	if err != nil {
@@ -43,7 +43,7 @@ func (g *Gateway) HandleConnection(nConn net.Conn) {
 	}
 	defer conn.Close()
 
-	nConn.SetDeadline(time.Time{})
+	_ = nConn.SetDeadline(time.Time{})
 
 	info, err := g.getDevboxInfoFromPermissions(conn.Permissions)
 	if err != nil {

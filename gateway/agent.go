@@ -55,7 +55,8 @@ func (g *Gateway) handleChannelAgent(
 
 	default:
 		log.Printf("[AgentForwarding] Rejecting unknown channel type: %s", channelType)
-		newChannel.Reject(ssh.UnknownChannelType, "unsupported channel type")
+
+		_ = newChannel.Reject(ssh.UnknownChannelType, "unsupported channel type")
 	}
 }
 
@@ -81,6 +82,7 @@ func (g *Gateway) handleSessionChannel(
 			"Failed to establish agent forwarding\r\n"+
 				"Make sure your SSH agent is running and has the correct keys\r\n",
 		)
+
 		return
 	}
 
@@ -88,6 +90,7 @@ func (g *Gateway) handleSessionChannel(
 	backendConn, err := g.connectToBackend(ctx, sessionResult.AgentChannel)
 	// close agent channel
 	_ = sessionResult.AgentChannel.Close()
+
 	if err != nil {
 		log.Printf("[AgentForwarding] Failed to connect to backend: %v", err)
 		fmt.Fprintf(channel,
@@ -95,8 +98,10 @@ func (g *Gateway) handleSessionChannel(
 				"Make sure your SSH agent has the correct key and that the key is in ~/.ssh/authorized_keys on the devbox\r\n",
 			err,
 		)
+
 		return
 	}
+
 	defer backendConn.Close()
 
 	log.Printf("[AgentForwarding] Backend connected")
@@ -127,7 +132,7 @@ func (g *Gateway) forwardCachedRequests(cachedRequests []*ssh.Request, backendCh
 		}
 
 		if req.WantReply {
-			req.Reply(ok, nil)
+			_ = req.Reply(ok, nil)
 		}
 	}
 }
@@ -166,7 +171,7 @@ func (g *Gateway) handleSessionRequests(
 				log.Printf("[AgentForwarding] ✓ Agent forwarding requested by client")
 
 				if req.WantReply {
-					req.Reply(true, nil)
+					_ = req.Reply(true, nil)
 				}
 
 				// CRITICAL: In bastion host mode, we need to actively create
@@ -182,9 +187,11 @@ func (g *Gateway) handleSessionRequests(
 			// For all other request types, cache them for forwarding (max 6)
 			if len(result.CachedRequests) < 6 {
 				result.CachedRequests = append(result.CachedRequests, req)
+
 				timeout.Reset(time.Second)
 				continue
 			}
+
 			return nil
 
 		case <-timeout.C:
@@ -223,8 +230,9 @@ func (g *Gateway) connectToBackend(
 	agentClient := agent.NewClient(agentChannel)
 
 	backendConfig := &ssh.ClientConfig{
-		User:            ctx.realUser,
-		Auth:            []ssh.AuthMethod{ssh.PublicKeysCallback(agentClient.Signers)},
+		User: ctx.realUser,
+		Auth: []ssh.AuthMethod{ssh.PublicKeysCallback(agentClient.Signers)},
+		//nolint:gosec
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 		Timeout:         5 * time.Second,
 	}

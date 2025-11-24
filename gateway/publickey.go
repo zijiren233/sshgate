@@ -9,7 +9,7 @@ import (
 )
 
 func (g *Gateway) handlePublicKeyMode(
-	conn *ssh.ServerConn,
+	_ *ssh.ServerConn,
 	chans <-chan ssh.NewChannel,
 	reqs <-chan *ssh.Request,
 	info *registry.DevboxInfo,
@@ -22,6 +22,8 @@ func (g *Gateway) handlePublicKeyMode(
 		Auth: []ssh.AuthMethod{
 			ssh.PublicKeys(info.PrivateKey),
 		},
+
+		//nolint:gosec
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 		Timeout:         10 * time.Second,
 	}
@@ -50,22 +52,25 @@ func (g *Gateway) handleGlobalRequestsPublicKey(
 		switch req.Type {
 		case "tcpip-forward", "cancel-tcpip-forward":
 			if req.WantReply {
-				req.Reply(false, nil)
+				_ = req.Reply(false, nil)
 			}
+
 			log.Printf("[PublicKey] Rejected remote port forwarding: %s", req.Type)
 
 		default:
 			ok, response, err := backendConn.SendRequest(req.Type, req.WantReply, req.Payload)
 			if err != nil {
 				log.Printf("[PublicKey] Error forwarding request %s: %v", req.Type, err)
+
 				if req.WantReply {
-					req.Reply(false, nil)
+					_ = req.Reply(false, nil)
 				}
+
 				return
 			}
 
 			if req.WantReply {
-				req.Reply(ok, response)
+				_ = req.Reply(ok, response)
 			}
 		}
 	}
@@ -80,7 +85,7 @@ func (g *Gateway) handleChannelPublicKey(
 		newChannel.ExtraData(),
 	)
 	if err != nil {
-		newChannel.Reject(ssh.ConnectionFailed, err.Error())
+		_ = newChannel.Reject(ssh.ConnectionFailed, err.Error())
 		return
 	}
 
