@@ -3,6 +3,7 @@
 package gateway
 
 import (
+	"errors"
 	"fmt"
 	"net/url"
 	"strings"
@@ -32,7 +33,7 @@ func (p *UsernameParser) Parse(input string) (username, namespace, devboxname st
 	}
 
 	if username == "" {
-		return "", "", "", fmt.Errorf("username cannot be empty")
+		return "", "", "", errors.New("username cannot be empty")
 	}
 
 	// Cut at the dash (separates namespace from devboxname)
@@ -45,11 +46,11 @@ func (p *UsernameParser) Parse(input string) (username, namespace, devboxname st
 	}
 
 	if namespace == "" {
-		return "", "", "", fmt.Errorf("namespace cannot be empty")
+		return "", "", "", errors.New("namespace cannot be empty")
 	}
 
 	if devboxname == "" {
-		return "", "", "", fmt.Errorf("devboxname cannot be empty")
+		return "", "", "", errors.New("devboxname cannot be empty")
 	}
 
 	return username, "ns-" + namespace, devboxname, nil

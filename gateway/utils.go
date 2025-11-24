@@ -10,8 +10,9 @@ func (g *Gateway) proxyRequests(in <-chan *ssh.Request, out ssh.Channel) {
 	for req := range in {
 		ok, err := out.SendRequest(req.Type, req.WantReply, req.Payload)
 		if req.WantReply {
-			req.Reply(ok, nil)
+			_ = req.Reply(ok, nil)
 		}
+
 		if err != nil {
 			return
 		}
@@ -20,10 +21,10 @@ func (g *Gateway) proxyRequests(in <-chan *ssh.Request, out ssh.Channel) {
 
 func (g *Gateway) proxyChannel(channel, backendChannel ssh.Channel) {
 	go func() {
-		io.Copy(channel, backendChannel)
-		channel.Close()
+		_, _ = io.Copy(channel, backendChannel)
+		_ = channel.Close()
 	}()
 
-	io.Copy(backendChannel, channel)
-	backendChannel.Close()
+	_, _ = io.Copy(backendChannel, channel)
+	_ = backendChannel.Close()
 }
