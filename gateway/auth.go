@@ -45,8 +45,40 @@ func (g *Gateway) publicKeyCallback(
 	// Look up devbox by public key
 	info, ok := g.registry.GetByFingerprint(fingerprint)
 	if !ok {
-		log.Printf("[Auth] Unknown public key: %s", fingerprint)
-		return nil, fmt.Errorf("unknown public key")
+		// Parse username: username.short_user_namespace-devboxname
+		username, fullNamespace, devboxName, err := g.parser.Parse(conn.User())
+		if err != nil {
+			log.Printf("[Auth] Invalid username format: %v", err)
+			return nil, err
+		}
+
+		info, ok := g.registry.GetDevboxInfo(fullNamespace, devboxName)
+		if !ok {
+			log.Printf("[Auth] Unknown public key: %s", fingerprint)
+			return nil, fmt.Errorf("unknown public key")
+		}
+
+		if info.PodIP == "" {
+			log.Printf(
+				"[PublicKey] Devbox %s/%s not running",
+				info.Namespace,
+				info.DevboxName,
+			)
+			return nil, fmt.Errorf("devbox %s/%s not running",
+				info.Namespace,
+				info.DevboxName,
+			)
+		}
+
+		return &ssh.Permissions{
+			Extensions: map[string]string{
+				"username":  username,
+				"auth_mode": AuthModeAgentForwarding.String(),
+			},
+			ExtraData: map[any]any{
+				"devbox_info": info,
+			},
+		}, nil
 	}
 
 	log.Printf(
@@ -54,6 +86,18 @@ func (g *Gateway) publicKeyCallback(
 		info.Namespace,
 		info.DevboxName,
 	)
+
+	if info.PodIP == "" {
+		log.Printf(
+			"[PublicKey] Devbox %s/%s not running",
+			info.Namespace,
+			info.DevboxName,
+		)
+		return nil, fmt.Errorf("devbox %s/%s not running",
+			info.Namespace,
+			info.DevboxName,
+		)
+	}
 
 	return &ssh.Permissions{
 		Extensions: map[string]string{
