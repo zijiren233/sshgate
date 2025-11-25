@@ -18,21 +18,13 @@ func (g *Gateway) handlePublicKeyMode(
 ) {
 	backendAddr := fmt.Sprintf("%s:%d", info.PodIP, g.options.SSHBackendPort)
 
-	//nolint:gosec // InsecureIgnoreHostKey is configurable via InsecureSkipHostKeyVerify option
-	hostKeyCallback := ssh.InsecureIgnoreHostKey()
-	if !g.options.InsecureSkipHostKeyVerify {
-		// TODO: Implement proper host key verification
-		//nolint:gosec // InsecureIgnoreHostKey is configurable via InsecureSkipHostKeyVerify option
-		hostKeyCallback = ssh.InsecureIgnoreHostKey()
-	}
-
 	backendConfig := &ssh.ClientConfig{
 		User: username,
 		Auth: []ssh.AuthMethod{
 			ssh.PublicKeys(info.PrivateKey),
 		},
-
-		HostKeyCallback: hostKeyCallback,
+		//nolint:gosec
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 		Timeout:         g.options.BackendConnectTimeoutPublicKey,
 	}
 

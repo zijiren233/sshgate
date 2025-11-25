@@ -192,19 +192,11 @@ func (g *Gateway) connectToBackend(
 
 	agentClient := agent.NewClient(agentChannel)
 
-	//nolint:gosec // InsecureIgnoreHostKey is configurable via InsecureSkipHostKeyVerify option
-	hostKeyCallback := ssh.InsecureIgnoreHostKey()
-	if !g.options.InsecureSkipHostKeyVerify {
-		// TODO: Implement proper host key verification
-		//nolint:gosec // InsecureIgnoreHostKey is configurable via InsecureSkipHostKeyVerify option
-		hostKeyCallback = ssh.InsecureIgnoreHostKey()
-	}
-
 	backendConfig := &ssh.ClientConfig{
 		User: ctx.realUser,
 		Auth: []ssh.AuthMethod{ssh.PublicKeysCallback(agentClient.Signers)},
-
-		HostKeyCallback: hostKeyCallback,
+		//nolint:gosec
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 		Timeout:         g.options.BackendConnectTimeoutAgent,
 	}
 

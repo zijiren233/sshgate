@@ -20,11 +20,9 @@ type Options struct {
 	BackendConnectTimeoutAgent     time.Duration `env:"BACKEND_CONNECT_TIMEOUT_AGENT"     envDefault:"5s"`
 	ProxyJumpTimeout               time.Duration `env:"PROXY_JUMP_TIMEOUT"                envDefault:"5s"`
 	SessionRequestTimeout          time.Duration `env:"SESSION_REQUEST_TIMEOUT"           envDefault:"3s"`
-	InsecureSkipHostKeyVerify      bool          `env:"INSECURE_SKIP_HOST_KEY_VERIFY"     envDefault:"true"`
 	MaxCachedRequests              int           `env:"MAX_CACHED_REQUESTS"               envDefault:"6"`
 	EnableAgentForward             bool          `env:"ENABLE_AGENT_FORWARD"              envDefault:"true"`
 	EnableProxyJump                bool          `env:"ENABLE_PROXY_JUMP"                 envDefault:"true"`
-	RejectPortForward              bool          `env:"REJECT_PORT_FORWARD"               envDefault:"true"`
 }
 
 // DefaultOptions returns the default gateway options
@@ -36,11 +34,9 @@ func DefaultOptions() Options {
 		BackendConnectTimeoutAgent:     5 * time.Second,
 		ProxyJumpTimeout:               5 * time.Second,
 		SessionRequestTimeout:          3 * time.Second,
-		InsecureSkipHostKeyVerify:      true,
 		MaxCachedRequests:              6,
 		EnableAgentForward:             true,
 		EnableProxyJump:                true,
-		RejectPortForward:              true,
 	}
 }
 
@@ -90,13 +86,6 @@ func WithSessionRequestTimeout(timeout time.Duration) Option {
 	}
 }
 
-// WithInsecureSkipHostKeyVerify sets whether to skip host key verification
-func WithInsecureSkipHostKeyVerify(skip bool) Option {
-	return func(o *Options) {
-		o.InsecureSkipHostKeyVerify = skip
-	}
-}
-
 // WithMaxCachedRequests sets the maximum number of cached requests
 func WithMaxCachedRequests(maxRequests int) Option {
 	return func(o *Options) {
@@ -115,13 +104,6 @@ func WithEnableAgentForward(enable bool) Option {
 func WithEnableProxyJump(enable bool) Option {
 	return func(o *Options) {
 		o.EnableProxyJump = enable
-	}
-}
-
-// WithRejectPortForward sets whether to reject port forwarding
-func WithRejectPortForward(reject bool) Option {
-	return func(o *Options) {
-		o.RejectPortForward = reject
 	}
 }
 

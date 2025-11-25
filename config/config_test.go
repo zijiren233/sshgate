@@ -191,28 +191,15 @@ func TestLoad(t *testing.T) {
 	})
 
 	t.Run("LoadWithSecurityOptions", func(t *testing.T) {
-		t.Setenv("INSECURE_SKIP_HOST_KEY_VERIFY", "false")
 		t.Setenv("MAX_CACHED_REQUESTS", "10")
-		t.Setenv("REJECT_PORT_FORWARD", "false")
 
 		cfg, err := config.Load()
 		if err != nil {
 			t.Fatalf("Load() failed: %v", err)
 		}
 
-		if cfg.Gateway.InsecureSkipHostKeyVerify != false {
-			t.Errorf(
-				"InsecureSkipHostKeyVerify = %v, want false",
-				cfg.Gateway.InsecureSkipHostKeyVerify,
-			)
-		}
-
 		if cfg.Gateway.MaxCachedRequests != 10 {
 			t.Errorf("MaxCachedRequests = %d, want 10", cfg.Gateway.MaxCachedRequests)
-		}
-
-		if cfg.Gateway.RejectPortForward != false {
-			t.Errorf("RejectPortForward = %v, want false", cfg.Gateway.RejectPortForward)
 		}
 	})
 }
