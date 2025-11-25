@@ -2,9 +2,8 @@ package gateway
 
 import (
 	"errors"
-	"fmt"
-	"log"
 
+	log "github.com/sirupsen/logrus"
 	"github.com/zijiren233/sshgate/registry"
 	"golang.org/x/crypto/ssh"
 )
@@ -13,35 +12,42 @@ import (
 type AuthMode int
 
 const (
-	AuthModeUnknown         AuthMode = iota
-	AuthModePublicKey                // Public key authentication mode
-	AuthModeAgentForwarding          // Agent forwarding authentication mode
+	AuthModeUnknown   AuthMode = iota
+	AuthModePublicKey          // Public key authentication mode
+	AuthModeCustomKey          // Custom key authentication mode (user-defined public keys)
+	AuthModeNoAuth             // No client authentication mode
 )
 
 func (m AuthMode) String() string {
 	switch m {
 	case AuthModePublicKey:
 		return "public-key"
-	case AuthModeAgentForwarding:
-		return "agent-forwarding"
+	case AuthModeCustomKey:
+		return "custom-key"
+	case AuthModeNoAuth:
+		return "no-auth"
 	default:
 		return "unknown"
 	}
 }
 
 // publicKeyCallback handles public key authentication
-func (g *Gateway) publicKeyCallback(
+func (g *Gateway) PublicKeyCallback(
 	conn ssh.ConnMetadata,
 	key ssh.PublicKey,
 ) (*ssh.Permissions, error) {
 	username := conn.User()
 	fingerprint := ssh.FingerprintSHA256(key)
 
-	log.Printf(
-		"[Auth] Public key authentication: user=%s, fingerprint=%s",
-		username,
-		fingerprint,
-	)
+	// Create auth logger with base fields
+	authLogger := g.logger.WithFields(log.Fields{
+		"auth_type":   "public_key",
+		"remote_addr": conn.RemoteAddr().String(),
+		"user":        username,
+		"fingerprint": fingerprint,
+	})
+
+	authLogger.Info("authentication attempt")
 
 	// Look up devbox by public key
 	info, ok := g.registry.GetByFingerprint(fingerprint)
@@ -49,58 +55,42 @@ func (g *Gateway) publicKeyCallback(
 		// Parse username: username.short_user_namespace-devboxname
 		username, fullNamespace, devboxName, err := g.parser.Parse(conn.User())
 		if err != nil {
-			log.Printf("[Auth] Invalid username format: %v", err)
 			return nil, err
 		}
 
+		// Update logger with devbox info for custom key mode
+		customKeyLogger := authLogger.WithFields(log.Fields{
+			"auth_mode": AuthModeCustomKey.String(),
+			"namespace": fullNamespace,
+			"devbox":    devboxName,
+		})
+
 		info, ok := g.registry.GetDevboxInfo(fullNamespace, devboxName)
 		if !ok {
-			log.Printf("[Auth] Unknown public key: %s", fingerprint)
-			return nil, errors.New("unknown public key")
+			return nil, errors.New("devbox not found")
 		}
 
-		if info.PodIP == "" {
-			log.Printf(
-				"[PublicKey] Devbox %s/%s not running",
-				info.Namespace,
-				info.DevboxName,
-			)
-
-			return nil, fmt.Errorf("devbox %s/%s not running",
-				info.Namespace,
-				info.DevboxName,
-			)
-		}
+		customKeyLogger.Info("authentication accept")
 
 		return &ssh.Permissions{
 			Extensions: map[string]string{
 				"username":  username,
-				"auth_mode": AuthModeAgentForwarding.String(),
+				"auth_mode": AuthModeCustomKey.String(),
 			},
 			ExtraData: map[any]any{
 				"devbox_info": info,
+				"logger":      customKeyLogger,
 			},
 		}, nil
 	}
 
-	log.Printf(
-		"[Auth] Public key matched: %s/%s",
-		info.Namespace,
-		info.DevboxName,
-	)
+	// Update logger with matched devbox info
+	pkLogger := authLogger.WithFields(log.Fields{
+		"namespace": info.Namespace,
+		"devbox":    info.DevboxName,
+	})
 
-	if info.PodIP == "" {
-		log.Printf(
-			"[PublicKey] Devbox %s/%s not running",
-			info.Namespace,
-			info.DevboxName,
-		)
-
-		return nil, fmt.Errorf("devbox %s/%s not running",
-			info.Namespace,
-			info.DevboxName,
-		)
-	}
+	authLogger.Info("authentication accept")
 
 	return &ssh.Permissions{
 		Extensions: map[string]string{
@@ -109,6 +99,53 @@ func (g *Gateway) publicKeyCallback(
 		},
 		ExtraData: map[any]any{
 			"devbox_info": info,
+			"logger":      pkLogger,
+		},
+	}, nil
+}
+
+// NoClientAuthCallback handles no client authentication
+// It parses the username to determine which devbox to connect to
+func (g *Gateway) NoClientAuthCallback(conn ssh.ConnMetadata) (*ssh.Permissions, error) {
+	username := conn.User()
+
+	// Create auth logger with base fields
+	authLogger := g.logger.WithFields(log.Fields{
+		"auth_type":   "no_auth",
+		"remote_addr": conn.RemoteAddr().String(),
+		"user":        username,
+	})
+
+	authLogger.Info("authentication attempt")
+
+	// Parse username: username.short_user_namespace-devboxname
+	parsedUsername, fullNamespace, devboxName, err := g.parser.Parse(username)
+	if err != nil {
+		return nil, err
+	}
+
+	// Update logger with devbox info
+	noAuthLogger := authLogger.WithFields(log.Fields{
+		"namespace": fullNamespace,
+		"devbox":    devboxName,
+	})
+
+	noAuthLogger.Info("authentication accept")
+
+	// Get devbox info
+	info, ok := g.registry.GetDevboxInfo(fullNamespace, devboxName)
+	if !ok {
+		return nil, errors.New("devbox not found")
+	}
+
+	return &ssh.Permissions{
+		Extensions: map[string]string{
+			"username":  parsedUsername,
+			"auth_mode": AuthModeNoAuth.String(),
+		},
+		ExtraData: map[any]any{
+			"devbox_info": info,
+			"logger":      noAuthLogger,
 		},
 	}, nil
 }
@@ -116,15 +153,18 @@ func (g *Gateway) publicKeyCallback(
 // determineAuthMode determines which authentication mode is being used
 func (g *Gateway) determineAuthMode(conn *ssh.ServerConn) AuthMode {
 	if conn.Permissions == nil {
-		return AuthModeAgentForwarding
+		return AuthModeNoAuth
 	}
 
 	authMode := conn.Permissions.Extensions["auth_mode"]
-	if authMode == AuthModePublicKey.String() {
+	switch authMode {
+	case AuthModePublicKey.String():
 		return AuthModePublicKey
+	case AuthModeNoAuth.String():
+		return AuthModeNoAuth
+	default:
+		return AuthModeCustomKey
 	}
-
-	return AuthModeAgentForwarding
 }
 
 func (g *Gateway) getDevboxInfoFromPermissions(
@@ -173,6 +213,9 @@ func NewPublicKeyCallback(
 ) func(ssh.ConnMetadata, ssh.PublicKey) (*ssh.Permissions, error) {
 	gw := &Gateway{
 		registry: reg,
+		parser:   &UsernameParser{},
+		logger:   log.WithField("component", "gateway"),
 	}
-	return gw.publicKeyCallback
+
+	return gw.PublicKeyCallback
 }

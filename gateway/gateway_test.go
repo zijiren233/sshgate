@@ -5,15 +5,23 @@ import (
 	"crypto/rand"
 	"encoding/pem"
 	"net"
+	"os"
 	"testing"
 	"time"
 
 	"github.com/zijiren233/sshgate/gateway"
+	"github.com/zijiren233/sshgate/logger"
 	"github.com/zijiren233/sshgate/registry"
 	"golang.org/x/crypto/ssh"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
+
+func TestMain(m *testing.M) {
+	// Initialize logger for tests
+	logger.InitLog()
+	os.Exit(m.Run())
+}
 
 func generateTestKeys(t *testing.T) (ssh.Signer, ssh.PublicKey, []byte, []byte) {
 	t.Helper()
@@ -56,13 +64,13 @@ func TestNew(t *testing.T) {
 	}
 
 	// Verify that Config is accessible
-	config := gw.Config()
-	if config == nil {
+	sshConfig := gw.Config()
+	if sshConfig == nil {
 		t.Fatal("Config() returned nil")
 	}
 
 	// Verify that PublicKeyCallback is set
-	if config.PublicKeyCallback == nil {
+	if sshConfig.PublicKeyCallback == nil {
 		t.Fatal("PublicKeyCallback is nil")
 	}
 }

@@ -6,9 +6,12 @@ import (
 	"net"
 	"os"
 
+	"github.com/zijiren233/sshgate/config"
 	"github.com/zijiren233/sshgate/gateway"
 	"github.com/zijiren233/sshgate/hostkey"
 	"github.com/zijiren233/sshgate/informer"
+	"github.com/zijiren233/sshgate/logger"
+	"github.com/zijiren233/sshgate/pprof"
 	"github.com/zijiren233/sshgate/registry"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -16,6 +19,26 @@ import (
 )
 
 func main() {
+	// Load configuration
+	cfg, err := config.Load()
+	if err != nil {
+		log.Fatalf("Failed to load configuration: %v", err)
+	}
+
+	// Initialize logger with configuration
+	logger.InitLog(
+		logger.WithDebug(cfg.Debug),
+		logger.WithLevel(cfg.LogLevel),
+		logger.WithFormat(cfg.LogFormat),
+	)
+
+	// Start pprof server if enabled
+	if cfg.PprofEnabled {
+		go func() {
+			_ = pprof.RunPprofServer(cfg.PprofPort)
+		}()
+	}
+
 	// Create Kubernetes client
 	clientset, err := createKubernetesClient()
 	if err != nil {
@@ -26,7 +49,9 @@ func main() {
 	reg := registry.New()
 
 	// Setup and start informers
-	infMgr := informer.New(clientset, reg)
+	infMgr := informer.New(clientset, reg,
+		informer.WithResyncPeriod(cfg.InformerResyncPeriod),
+	)
 
 	ctx := context.Background()
 	if err := infMgr.Start(ctx); err != nil {
@@ -34,22 +59,22 @@ func main() {
 	}
 
 	// Load SSH server host key
-	hostKey, err := hostkey.Load()
+	hostKey, err := hostkey.Load(cfg.SSHHostKeySeed)
 	if err != nil {
 		log.Fatalf("Failed to load host key: %v", err)
 	}
 
-	// Create gateway
-	gw := gateway.New(hostKey, reg)
+	// Create gateway with embedded options
+	gw := gateway.New(hostKey, reg, gateway.WithOptions(cfg.Gateway))
 
 	// Start SSH server
 	//nolint:noctx
-	listener, err := net.Listen("tcp", "0.0.0.0:2222")
+	listener, err := net.Listen("tcp", cfg.SSHListenAddr)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	log.Println("SSH Gateway listening on :2222")
+	log.Printf("SSH Gateway listening on %s", cfg.SSHListenAddr)
 
 	for {
 		conn, err := listener.Accept()

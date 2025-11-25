@@ -57,9 +57,9 @@ func TestGenerateDeterministicKeyDifferentSeeds(t *testing.T) {
 
 func TestLoad(t *testing.T) {
 	// Test with custom seed
-	t.Setenv("SSH_HOST_KEY_SEED", "test-seed")
+	seed := "test-seed"
 
-	signer, err := hostkey.Load()
+	signer, err := hostkey.Load(seed)
 	if err != nil {
 		t.Fatalf("Load() failed: %v", err)
 	}
@@ -76,16 +76,16 @@ func TestLoad(t *testing.T) {
 }
 
 func TestLoadDefaultSeed(t *testing.T) {
-	// Ensure no custom seed is set
-	t.Setenv("SSH_HOST_KEY_SEED", "")
+	// Test with default seed
+	seed := "sealos-devbox"
 
-	signer1, err := hostkey.Load()
+	signer1, err := hostkey.Load(seed)
 	if err != nil {
 		t.Fatalf("Load() failed: %v", err)
 	}
 
 	// Load again to verify consistency
-	signer2, err := hostkey.Load()
+	signer2, err := hostkey.Load(seed)
 	if err != nil {
 		t.Fatalf("Load() failed: %v", err)
 	}

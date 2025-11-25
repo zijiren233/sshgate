@@ -4,25 +4,17 @@ import (
 	"crypto/ed25519"
 	"crypto/sha256"
 	"fmt"
-	"log"
-	"os"
 
+	log "github.com/sirupsen/logrus"
 	"golang.org/x/crypto/ssh"
 )
 
-// Load loads or generates a deterministic SSH host key based on SSH_HOST_KEY_SEED
-func Load() (ssh.Signer, error) {
+var logger = log.WithField("component", "hostkey")
+
+// Load loads or generates a deterministic SSH host key based on seed
+func Load(seed string) (ssh.Signer, error) {
 	// Generate a deterministic key based on SSH_HOST_KEY_SEED
 	// This ensures multiple replicas generate the same key
-	seed := os.Getenv("SSH_HOST_KEY_SEED")
-	if seed == "" {
-		seed = "sealos-devbox"
-
-		log.Println("Using default SSH_HOST_KEY_SEED: sealos-devbox")
-	}
-
-	log.Println("Generating deterministic host key from SSH_HOST_KEY_SEED")
-
 	return GenerateDeterministicKey(seed)
 }
 
@@ -42,7 +34,7 @@ func GenerateDeterministicKey(seed string) (ssh.Signer, error) {
 	// Log the public key fingerprint for verification
 	publicKey := signer.PublicKey()
 	fingerprint := ssh.FingerprintSHA256(publicKey)
-	log.Printf("Host key fingerprint: %s", fingerprint)
+	logger.WithField("fingerprint", fingerprint).Info("Host key generated")
 
 	return signer, nil
 }
