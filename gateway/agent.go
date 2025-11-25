@@ -2,71 +2,22 @@ package gateway
 
 import (
 	"fmt"
-	"log"
 	"time"
 
-	"github.com/zijiren233/sshgate/registry"
+	log "github.com/sirupsen/logrus"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
 )
 
-// SessionRequestsResult contains the results of processing session requests
-type SessionRequestsResult struct {
-	AgentChannel   ssh.Channel    // Agent channel to client (nil if not requested/failed)
-	CachedRequests []*ssh.Request // Cached non-agent requests (max 6)
-}
-
-type sessionContext struct {
-	conn     *ssh.ServerConn
-	info     *registry.DevboxInfo
-	realUser string
-}
-
-func (g *Gateway) handleAgentForwardingMode(
-	conn *ssh.ServerConn,
-	chans <-chan ssh.NewChannel,
-	reqs <-chan *ssh.Request,
-	info *registry.DevboxInfo,
-	username string,
-) {
-	ctx := &sessionContext{
-		conn:     conn,
-		info:     info,
-		realUser: username,
-	}
-
-	go ssh.DiscardRequests(reqs)
-
-	for newChannel := range chans {
-		g.handleChannelAgent(newChannel, ctx)
-	}
-}
-
-func (g *Gateway) handleChannelAgent(
+func (g *Gateway) handleAgentForwardMode(
 	newChannel ssh.NewChannel,
 	ctx *sessionContext,
 ) {
-	channelType := newChannel.ChannelType()
-	log.Printf("[AgentForwarding] New channel: %s", channelType)
+	sessionLogger := ctx.logger.WithField("mode", "agent_forwarding")
 
-	switch channelType {
-	case "session":
-		g.handleSessionChannel(newChannel, ctx)
-
-	default:
-		log.Printf("[AgentForwarding] Rejecting unknown channel type: %s", channelType)
-
-		_ = newChannel.Reject(ssh.UnknownChannelType, "unsupported channel type")
-	}
-}
-
-func (g *Gateway) handleSessionChannel(
-	newChannel ssh.NewChannel,
-	ctx *sessionContext,
-) {
 	channel, requests, err := newChannel.Accept()
 	if err != nil {
-		log.Printf("[AgentForwarding] Failed to accept session channel: %v", err)
+		sessionLogger.WithError(err).Error("Failed to accept session channel")
 		return
 	}
 	defer channel.Close()
@@ -78,6 +29,7 @@ func (g *Gateway) handleSessionChannel(
 
 	// Check if agent forwarding was successful
 	if sessionResult == nil || sessionResult.AgentChannel == nil {
+		sessionLogger.Warn("Failed to establish agent forwarding")
 		fmt.Fprintf(channel,
 			"Failed to establish agent forwarding\r\n"+
 				"Make sure your SSH agent is running and has the correct keys\r\n",
@@ -92,7 +44,7 @@ func (g *Gateway) handleSessionChannel(
 	_ = sessionResult.AgentChannel.Close()
 
 	if err != nil {
-		log.Printf("[AgentForwarding] Failed to connect to backend: %v", err)
+		sessionLogger.WithError(err).Error("Failed to connect to backend")
 		fmt.Fprintf(channel,
 			"Failed to connect to devbox: %v\r\n"+
 				"Make sure your SSH agent has the correct key and that the key is in ~/.ssh/authorized_keys on the devbox\r\n",
@@ -104,17 +56,17 @@ func (g *Gateway) handleSessionChannel(
 
 	defer backendConn.Close()
 
-	log.Printf("[AgentForwarding] Backend connected")
+	sessionLogger.Info("Backend connected via agent forwarding")
 
 	backendChannel, backendRequests, err := backendConn.OpenChannel("session", nil)
 	if err != nil {
-		log.Printf("[AgentForwarding] Failed to open backend channel: %v", err)
+		sessionLogger.WithError(err).Error("Failed to open backend channel")
 		return
 	}
 	defer backendChannel.Close()
 
 	// Forward cached requests to backend
-	g.forwardCachedRequests(sessionResult.CachedRequests, backendChannel)
+	g.forwardCachedRequests(sessionResult.CachedRequests, backendChannel, sessionLogger)
 
 	// Proxy all remaining requests and data
 	go g.proxyRequests(requests, backendChannel)
@@ -124,17 +76,29 @@ func (g *Gateway) handleSessionChannel(
 }
 
 // forwardCachedRequests forwards cached SSH requests to the backend
-func (g *Gateway) forwardCachedRequests(cachedRequests []*ssh.Request, backendChannel ssh.Channel) {
+func (g *Gateway) forwardCachedRequests(
+	cachedRequests []*ssh.Request,
+	backendChannel ssh.Channel,
+	logger *log.Entry,
+) {
 	for _, req := range cachedRequests {
 		ok, err := backendChannel.SendRequest(req.Type, req.WantReply, req.Payload)
 		if err != nil {
-			log.Printf("[AgentForwarding] Failed to forward cached request %s: %v", req.Type, err)
+			logger.WithField("request_type", req.Type).
+				WithError(err).
+				Warn("Failed to forward cached request")
 		}
 
 		if req.WantReply {
 			_ = req.Reply(ok, nil)
 		}
 	}
+}
+
+// SessionRequestsResult contains the results of processing session requests
+type SessionRequestsResult struct {
+	AgentChannel   ssh.Channel    // Agent channel to client (nil if not requested/failed)
+	CachedRequests []*ssh.Request // Cached non-agent requests (max 6)
 }
 
 // handleSessionRequests processes channel requests for a session
@@ -146,11 +110,11 @@ func (g *Gateway) handleSessionRequests(
 ) *SessionRequestsResult {
 	result := &SessionRequestsResult{
 		AgentChannel:   nil,
-		CachedRequests: make([]*ssh.Request, 0, 6), // Pre-allocate with max capacity 6
+		CachedRequests: make([]*ssh.Request, 0, g.options.MaxCachedRequests),
 	}
 
 	// Process requests until we've handled all initial setup requests
-	timeout := time.NewTimer(time.Second * 3)
+	timeout := time.NewTimer(g.options.SessionRequestTimeout)
 	defer timeout.Stop()
 
 	for {
@@ -160,15 +124,14 @@ func (g *Gateway) handleSessionRequests(
 				return result
 			}
 
-			log.Printf(
-				"[AgentForwarding] Session channel request: %s (WantReply: %v)",
-				req.Type,
-				req.WantReply,
-			)
+			ctx.logger.WithFields(log.Fields{
+				"request_type": req.Type,
+				"want_reply":   req.WantReply,
+			}).Debug("Session channel request")
 
 			// Handle auth-agent-req@openssh.com as a channel request (OpenSSH standard)
 			if req.Type == "auth-agent-req@openssh.com" {
-				log.Printf("[AgentForwarding] ✓ Agent forwarding requested by client")
+				ctx.logger.Info("Agent forwarding requested by client")
 
 				if req.WantReply {
 					_ = req.Reply(true, nil)
@@ -184,8 +147,8 @@ func (g *Gateway) handleSessionRequests(
 				return result
 			}
 
-			// For all other request types, cache them for forwarding (max 6)
-			if len(result.CachedRequests) < 6 {
+			// For all other request types, cache them for forwarding
+			if len(result.CachedRequests) < g.options.MaxCachedRequests {
 				result.CachedRequests = append(result.CachedRequests, req)
 
 				timeout.Reset(time.Second)
@@ -209,11 +172,11 @@ func (g *Gateway) createAgentChannelToClient(ctx *sessionContext) ssh.Channel {
 	// This tells the client "I want to access your SSH agent"
 	agentChannel, agentReqs, err := ctx.conn.OpenChannel("auth-agent@openssh.com", nil)
 	if err != nil {
-		log.Printf("[AgentForwarding] Failed to open agent channel to client: %v", err)
+		ctx.logger.WithError(err).Error("Failed to open agent channel to client")
 		return nil
 	}
 
-	log.Printf("[AgentForwarding] ✓ Agent channel to client established")
+	ctx.logger.Info("Agent channel to client established")
 
 	// Discard requests on the agent channel
 	go ssh.DiscardRequests(agentReqs)
@@ -225,27 +188,34 @@ func (g *Gateway) connectToBackend(
 	ctx *sessionContext,
 	agentChannel ssh.Channel,
 ) (*ssh.Client, error) {
-	backendAddr := ctx.info.PodIP + ":22"
+	backendAddr := fmt.Sprintf("%s:%d", ctx.info.PodIP, g.options.SSHBackendPort)
 
 	agentClient := agent.NewClient(agentChannel)
+
+	//nolint:gosec // InsecureIgnoreHostKey is configurable via InsecureSkipHostKeyVerify option
+	hostKeyCallback := ssh.InsecureIgnoreHostKey()
+	if !g.options.InsecureSkipHostKeyVerify {
+		// TODO: Implement proper host key verification
+		//nolint:gosec // InsecureIgnoreHostKey is configurable via InsecureSkipHostKeyVerify option
+		hostKeyCallback = ssh.InsecureIgnoreHostKey()
+	}
 
 	backendConfig := &ssh.ClientConfig{
 		User: ctx.realUser,
 		Auth: []ssh.AuthMethod{ssh.PublicKeysCallback(agentClient.Signers)},
-		//nolint:gosec
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
-		Timeout:         5 * time.Second,
+
+		HostKeyCallback: hostKeyCallback,
+		Timeout:         g.options.BackendConnectTimeoutAgent,
 	}
 
-	log.Printf(
-		"[AgentForwarding] Connecting to backend %s as user %s with agent authentication",
-		backendAddr,
-		ctx.realUser,
-	)
+	ctx.logger.WithFields(log.Fields{
+		"backend_addr": backendAddr,
+		"backend_user": ctx.realUser,
+	}).Info("Connecting to backend with agent authentication")
 
 	conn, err := ssh.Dial("tcp", backendAddr, backendConfig)
 	if err != nil {
-		return nil, fmt.Errorf("failed to connect to backend: %w", err)
+		return nil, err
 	}
 
 	return conn, nil

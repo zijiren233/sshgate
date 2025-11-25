@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"io"
+	"net"
 
 	"golang.org/x/crypto/ssh"
 )
@@ -27,4 +28,15 @@ func (g *Gateway) proxyChannel(channel, backendChannel ssh.Channel) {
 
 	_, _ = io.Copy(backendChannel, channel)
 	_ = backendChannel.Close()
+}
+
+// proxyChannelToConn proxies data between an SSH channel and a net.Conn
+func (g *Gateway) proxyChannelToConn(channel ssh.Channel, conn net.Conn) {
+	go func() {
+		_, _ = io.Copy(channel, conn)
+		_ = channel.Close()
+	}()
+
+	_, _ = io.Copy(conn, channel)
+	_ = conn.Close()
 }

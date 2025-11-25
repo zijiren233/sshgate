@@ -1,9 +1,9 @@
 package gateway
 
 import (
-	"log"
-	"time"
+	"fmt"
 
+	log "github.com/sirupsen/logrus"
 	"github.com/zijiren233/sshgate/registry"
 	"golang.org/x/crypto/ssh"
 )
@@ -14,8 +14,17 @@ func (g *Gateway) handlePublicKeyMode(
 	reqs <-chan *ssh.Request,
 	info *registry.DevboxInfo,
 	username string,
+	logger *log.Entry,
 ) {
-	backendAddr := info.PodIP + ":22"
+	backendAddr := fmt.Sprintf("%s:%d", info.PodIP, g.options.SSHBackendPort)
+
+	//nolint:gosec // InsecureIgnoreHostKey is configurable via InsecureSkipHostKeyVerify option
+	hostKeyCallback := ssh.InsecureIgnoreHostKey()
+	if !g.options.InsecureSkipHostKeyVerify {
+		// TODO: Implement proper host key verification
+		//nolint:gosec // InsecureIgnoreHostKey is configurable via InsecureSkipHostKeyVerify option
+		hostKeyCallback = ssh.InsecureIgnoreHostKey()
+	}
 
 	backendConfig := &ssh.ClientConfig{
 		User: username,
@@ -23,30 +32,32 @@ func (g *Gateway) handlePublicKeyMode(
 			ssh.PublicKeys(info.PrivateKey),
 		},
 
-		//nolint:gosec
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
-		Timeout:         10 * time.Second,
+		HostKeyCallback: hostKeyCallback,
+		Timeout:         g.options.BackendConnectTimeoutPublicKey,
 	}
 
 	backendConn, err := ssh.Dial("tcp", backendAddr, backendConfig)
 	if err != nil {
-		log.Printf("[PublicKey] Failed to connect to backend %s: %v", backendAddr, err)
+		logger.WithField("backend_addr", backendAddr).
+			WithError(err).
+			Error("Failed to connect to backend")
 		return
 	}
 	defer backendConn.Close()
 
-	log.Printf("[PublicKey] Backend connected")
+	logger.Info("Backend connected")
 
-	go g.handleGlobalRequestsPublicKey(reqs, backendConn)
+	go g.handleGlobalRequestsPublicKey(reqs, backendConn, logger)
 
 	for newChannel := range chans {
-		go g.handleChannelPublicKey(newChannel, backendConn)
+		go g.handleChannelPublicKey(newChannel, backendConn, logger)
 	}
 }
 
 func (g *Gateway) handleGlobalRequestsPublicKey(
 	reqs <-chan *ssh.Request,
 	backendConn *ssh.Client,
+	logger *log.Entry,
 ) {
 	for req := range reqs {
 		switch req.Type {
@@ -55,12 +66,14 @@ func (g *Gateway) handleGlobalRequestsPublicKey(
 				_ = req.Reply(false, nil)
 			}
 
-			log.Printf("[PublicKey] Rejected remote port forwarding: %s", req.Type)
+			logger.WithField("request_type", req.Type).Warn("Rejected remote port forwarding")
 
 		default:
 			ok, response, err := backendConn.SendRequest(req.Type, req.WantReply, req.Payload)
 			if err != nil {
-				log.Printf("[PublicKey] Error forwarding request %s: %v", req.Type, err)
+				logger.WithField("request_type", req.Type).
+					WithError(err).
+					Error("Error forwarding request")
 
 				if req.WantReply {
 					_ = req.Reply(false, nil)
@@ -79,21 +92,28 @@ func (g *Gateway) handleGlobalRequestsPublicKey(
 func (g *Gateway) handleChannelPublicKey(
 	newChannel ssh.NewChannel,
 	backendConn *ssh.Client,
+	logger *log.Entry,
 ) {
+	channelLogger := logger.WithField("channel_type", newChannel.ChannelType())
+
 	backendChannel, backendReqs, err := backendConn.OpenChannel(
 		newChannel.ChannelType(),
 		newChannel.ExtraData(),
 	)
 	if err != nil {
+		channelLogger.WithError(err).Warn("Failed to open backend channel")
 		_ = newChannel.Reject(ssh.ConnectionFailed, err.Error())
 		return
 	}
 
 	channel, requests, err := newChannel.Accept()
 	if err != nil {
+		channelLogger.WithError(err).Warn("Failed to accept channel")
 		backendChannel.Close()
 		return
 	}
+
+	channelLogger.Debug("Channel established")
 
 	go g.proxyRequests(requests, backendChannel)
 	go g.proxyRequests(backendReqs, channel)

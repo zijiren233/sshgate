@@ -3,6 +3,9 @@ module github.com/zijiren233/sshgate
 go 1.25.0
 
 require (
+	github.com/caarlos0/env/v9 v9.0.0
+	github.com/joho/godotenv v1.5.1
+	github.com/sirupsen/logrus v1.9.3
 	golang.org/x/crypto v0.45.0
 	k8s.io/api v0.34.2
 	k8s.io/apimachinery v0.34.2

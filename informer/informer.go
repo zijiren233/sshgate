@@ -3,9 +3,9 @@ package informer
 import (
 	"context"
 	"fmt"
-	"log"
 	"time"
 
+	log "github.com/sirupsen/logrus"
 	"github.com/zijiren233/sshgate/registry"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/informers"
@@ -15,18 +15,39 @@ import (
 
 // Manager manages Kubernetes informers for the gateway
 type Manager struct {
-	clientset kubernetes.Interface
-	registry  *registry.Registry
-	factory   informers.SharedInformerFactory
-	cancel    context.CancelFunc
+	clientset    kubernetes.Interface
+	registry     *registry.Registry
+	resyncPeriod time.Duration
+	factory      informers.SharedInformerFactory
+	cancel       context.CancelFunc
+	logger       *log.Entry
+}
+
+// Option configures the informer manager
+type Option func(*Manager)
+
+// WithResyncPeriod sets the resync period for the informers
+func WithResyncPeriod(d time.Duration) Option {
+	return func(m *Manager) {
+		m.resyncPeriod = d
+	}
 }
 
 // New creates a new informer manager
-func New(clientset kubernetes.Interface, reg *registry.Registry) *Manager {
-	return &Manager{
-		clientset: clientset,
-		registry:  reg,
+func New(clientset kubernetes.Interface, reg *registry.Registry, opts ...Option) *Manager {
+	m := &Manager{
+		clientset:    clientset,
+		registry:     reg,
+		resyncPeriod: 30 * time.Second, // Default value
+		logger:       log.WithField("component", "informer"),
 	}
+
+	// Apply options
+	for _, opt := range opts {
+		opt(m)
+	}
+
+	return m
 }
 
 // Start initializes and starts all informers
@@ -35,7 +56,7 @@ func (m *Manager) Start(ctx context.Context) error {
 	ctx, m.cancel = context.WithCancel(ctx)
 
 	// Create informer factory
-	m.factory = informers.NewSharedInformerFactory(m.clientset, 30*time.Second)
+	m.factory = informers.NewSharedInformerFactory(m.clientset, m.resyncPeriod)
 
 	// Setup secret informer
 	secretInformer := m.factory.Core().V1().Secrets().Informer()
@@ -69,7 +90,7 @@ func (m *Manager) Start(ctx context.Context) error {
 		return ErrCacheSyncFailed
 	}
 
-	log.Println("Informers synced successfully")
+	m.logger.Info("Informers synced successfully")
 
 	return nil
 }
@@ -127,31 +148,31 @@ func (m *Manager) ProcessPod(pod *corev1.Pod, action string) error {
 func (m *Manager) handleSecretAdd(obj any) {
 	secret, ok := obj.(*corev1.Secret)
 	if !ok {
-		log.Printf("Error: expected *corev1.Secret, got %T", obj)
+		m.logger.WithField("type", fmt.Sprintf("%T", obj)).Error("Expected *corev1.Secret")
 		return
 	}
 
 	if err := m.registry.AddSecret(secret); err != nil {
-		log.Printf("Error adding secret: %v", err)
+		m.logger.WithError(err).Error("Error adding secret")
 	}
 }
 
 func (m *Manager) handleSecretUpdate(oldObj, newObj any) {
 	secret, ok := newObj.(*corev1.Secret)
 	if !ok {
-		log.Printf("Error: expected *corev1.Secret, got %T", newObj)
+		m.logger.WithField("type", fmt.Sprintf("%T", newObj)).Error("Expected *corev1.Secret")
 		return
 	}
 
 	if err := m.registry.AddSecret(secret); err != nil {
-		log.Printf("Error updating secret: %v", err)
+		m.logger.WithError(err).Error("Error updating secret")
 	}
 }
 
 func (m *Manager) handleSecretDelete(obj any) {
 	secret, ok := obj.(*corev1.Secret)
 	if !ok {
-		log.Printf("Error: expected *corev1.Secret, got %T", obj)
+		m.logger.WithField("type", fmt.Sprintf("%T", obj)).Error("Expected *corev1.Secret")
 		return
 	}
 
@@ -162,31 +183,31 @@ func (m *Manager) handleSecretDelete(obj any) {
 func (m *Manager) handlePodAdd(obj any) {
 	pod, ok := obj.(*corev1.Pod)
 	if !ok {
-		log.Printf("Error: expected *corev1.Pod, got %T", obj)
+		m.logger.WithField("type", fmt.Sprintf("%T", obj)).Error("Expected *corev1.Pod")
 		return
 	}
 
 	if err := m.registry.UpdatePod(pod); err != nil {
-		log.Printf("Error adding pod: %v", err)
+		m.logger.WithError(err).Error("Error adding pod")
 	}
 }
 
 func (m *Manager) handlePodUpdate(oldObj, newObj any) {
 	pod, ok := newObj.(*corev1.Pod)
 	if !ok {
-		log.Printf("Error: expected *corev1.Pod, got %T", newObj)
+		m.logger.WithField("type", fmt.Sprintf("%T", newObj)).Error("Expected *corev1.Pod")
 		return
 	}
 
 	if err := m.registry.UpdatePod(pod); err != nil {
-		log.Printf("Error updating pod: %v", err)
+		m.logger.WithError(err).Error("Error updating pod")
 	}
 }
 
 func (m *Manager) handlePodDelete(obj any) {
 	pod, ok := obj.(*corev1.Pod)
 	if !ok {
-		log.Printf("Error: expected *corev1.Pod, got %T", obj)
+		m.logger.WithField("type", fmt.Sprintf("%T", obj)).Error("Expected *corev1.Pod")
 		return
 	}
 

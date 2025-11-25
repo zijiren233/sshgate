@@ -2,9 +2,9 @@ package registry
 
 import (
 	"fmt"
-	"log"
 	"sync"
 
+	log "github.com/sirupsen/logrus"
 	"golang.org/x/crypto/ssh"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -40,6 +40,7 @@ type Registry struct {
 	fingerprintToDevbox map[string]*DevboxInfo
 	// namespace/devboxName -> DevboxInfo
 	devboxToInfo map[string]*DevboxInfo
+	logger       *log.Entry
 }
 
 // New creates a new Registry instance
@@ -47,6 +48,7 @@ func New() *Registry {
 	return &Registry{
 		fingerprintToDevbox: make(map[string]*DevboxInfo),
 		devboxToInfo:        make(map[string]*DevboxInfo),
+		logger:              log.WithField("component", "registry"),
 	}
 }
 
@@ -88,18 +90,20 @@ func (r *Registry) AddSecret(secret *corev1.Secret) error {
 	if privateKeyData, ok := secret.Data[DevboxPrivateKeyField]; ok {
 		privateKey, err = ssh.ParsePrivateKey(privateKeyData)
 		if err != nil {
-			log.Printf(
-				"Warning: failed to parse private key for %s/%s: %v",
-				secret.Namespace,
-				devboxName,
-				err,
-			)
+			r.logger.WithFields(log.Fields{
+				"namespace": secret.Namespace,
+				"devbox":    devboxName,
+			}).WithError(err).Warn("Failed to parse private key")
 		}
 	}
 
 	key := fmt.Sprintf("%s/%s", secret.Namespace, devboxName)
 
-	log.Printf("Adding secret %s/%s with fingerprint %s", secret.Namespace, devboxName, fingerprint)
+	r.logger.WithFields(log.Fields{
+		"namespace":   secret.Namespace,
+		"devbox":      devboxName,
+		"fingerprint": fingerprint,
+	}).Info("Adding secret")
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -129,7 +133,10 @@ func (r *Registry) DeleteSecret(secret *corev1.Secret) {
 	}
 
 	key := fmt.Sprintf("%s/%s", secret.Namespace, devboxName)
-	log.Printf("Removing secret %s/%s", secret.Namespace, devboxName)
+	r.logger.WithFields(log.Fields{
+		"namespace": secret.Namespace,
+		"devbox":    devboxName,
+	}).Info("Removing secret")
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -159,7 +166,11 @@ func (r *Registry) UpdatePod(pod *corev1.Pod) error {
 	}
 
 	key := fmt.Sprintf("%s/%s", pod.Namespace, devboxName)
-	log.Printf("Updating pod IP for %s/%s: %s", pod.Namespace, devboxName, pod.Status.PodIP)
+	r.logger.WithFields(log.Fields{
+		"namespace": pod.Namespace,
+		"devbox":    devboxName,
+		"pod_ip":    pod.Status.PodIP,
+	}).Info("Updating pod IP")
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -186,7 +197,10 @@ func (r *Registry) DeletePod(pod *corev1.Pod) {
 	}
 
 	key := fmt.Sprintf("%s/%s", pod.Namespace, devboxName)
-	log.Printf("Removing pod IP for %s/%s", pod.Namespace, devboxName)
+	r.logger.WithFields(log.Fields{
+		"namespace": pod.Namespace,
+		"devbox":    devboxName,
+	}).Info("Removing pod IP")
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
