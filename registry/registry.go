@@ -1,6 +1,7 @@
 package registry
 
 import (
+	"bytes"
 	"fmt"
 	"sync"
 
@@ -70,8 +71,11 @@ func (r *Registry) AddSecret(secret *corev1.Secret) error {
 		)
 	}
 
+	// Get first line of public key data
+	firstLine := bytes.SplitN(publicKeyData, []byte("\n"), 2)[0]
+
 	// Parse public key
-	publicKey, _, _, _, err := ssh.ParseAuthorizedKey(publicKeyData)
+	publicKey, _, _, _, err := ssh.ParseAuthorizedKey(firstLine)
 	if err != nil {
 		return fmt.Errorf("failed to parse public key: %w", err)
 	}
