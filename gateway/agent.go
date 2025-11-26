@@ -68,11 +68,8 @@ func (g *Gateway) handleAgentForwardMode(
 	// Forward cached requests to backend
 	g.forwardCachedRequests(sessionResult.CachedRequests, backendChannel, sessionLogger)
 
-	// Proxy all remaining requests and data
-	go g.proxyRequests(requests, backendChannel)
-	go g.proxyRequests(backendRequests, channel)
-
-	g.proxyChannel(channel, backendChannel)
+	// Use synchronized proxy to ensure exit-status is forwarded before closing
+	g.proxyChannelWithRequests(channel, backendChannel, requests, backendRequests)
 }
 
 // forwardCachedRequests forwards cached SSH requests to the backend

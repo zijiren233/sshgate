@@ -107,8 +107,6 @@ func (g *Gateway) handleChannelPublicKey(
 
 	channelLogger.Debug("Channel established")
 
-	go g.proxyRequests(requests, backendChannel)
-	go g.proxyRequests(backendReqs, channel)
-
-	g.proxyChannel(channel, backendChannel)
+	// Use synchronized proxy to ensure exit-status is forwarded before closing
+	g.proxyChannelWithRequests(channel, backendChannel, requests, backendReqs)
 }
