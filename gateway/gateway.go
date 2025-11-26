@@ -134,9 +134,12 @@ func New(hostKey ssh.Signer, reg *registry.Registry, opts ...Option) *Gateway {
 	}
 
 	sshConfig := &ssh.ServerConfig{
-		NoClientAuth:         true,
-		NoClientAuthCallback: gw.NoClientAuthCallback,
-		PublicKeyCallback:    gw.PublicKeyCallback,
+		NoClientAuth: true,
+		// Ref: https://www.openssh.org/txt/release-7.2
+		// need disable no client auth mode
+		// because AddKeysToAgent need use public key auth
+		// NoClientAuthCallback: gw.NoClientAuthCallback,
+		PublicKeyCallback: gw.PublicKeyCallback,
 	}
 	sshConfig.AddHostKey(hostKey)
 
