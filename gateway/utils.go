@@ -30,19 +30,14 @@ func (g *Gateway) proxyChannelWithRequests(
 ) {
 	var wg sync.WaitGroup
 
-	// Start request forwarding goroutines if channels are provided
-	if clientReqs != nil {
-		wg.Go(func() { g.proxyRequests(clientReqs, backendChannel) })
-	}
-
-	if backendReqs != nil {
-		wg.Go(func() { g.proxyRequests(backendReqs, channel) })
-	}
+	// Start request forwarding goroutines
+	wg.Go(func() { g.proxyRequests(clientReqs, backendChannel) })
+	wg.Go(func() { g.proxyRequests(backendReqs, channel) })
 
 	// Proxy data in both directions
 	var copyWg sync.WaitGroup
 	copyWg.Go(func() { _, _ = io.Copy(channel, backendChannel) })
-	copyWg.Go(func() { _, _ = io.Copy(backendChannel, channel) })
+	_, _ = io.Copy(backendChannel, channel)
 
 	// Wait for data copy to complete
 	copyWg.Wait()
