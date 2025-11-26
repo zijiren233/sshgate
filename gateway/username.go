@@ -1,5 +1,3 @@
-// gateway/username.go
-
 package gateway
 
 import (
@@ -9,13 +7,13 @@ import (
 	"strings"
 )
 
-// UsernameParser parses username in format: username.short_user_namespace-devboxname
+// UsernameParser parses username in format: username@short_user_namespace-devboxname
 type UsernameParser struct{}
 
 // Parse parses the username format
-// Format: username.short_user_namespace-devboxname
+// Format: username@short_user_namespace-devboxname
 // Examples:
-//   - ubuntu.someteam-workspace
+//   - ubuntu@someteam-workspace
 func (p *UsernameParser) Parse(input string) (username, namespace, devboxname string, err error) {
 	// URL decode (handle %2E, %2D, etc.)
 	decoded, err := url.QueryUnescape(input)
@@ -24,10 +22,10 @@ func (p *UsernameParser) Parse(input string) (username, namespace, devboxname st
 	}
 
 	// Cut at the first dot (separates username from target)
-	username, target, found := strings.Cut(input, ".")
+	username, target, found := strings.Cut(input, "@")
 	if !found {
 		return "", "", "", fmt.Errorf(
-			"invalid format: expected username.namespace-devboxname, got: %s",
+			"invalid format: expected username@namespace-devboxname, got: %s",
 			input,
 		)
 	}

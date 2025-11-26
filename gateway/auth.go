@@ -52,7 +52,7 @@ func (g *Gateway) PublicKeyCallback(
 	// Look up devbox by public key
 	info, ok := g.registry.GetByFingerprint(fingerprint)
 	if !ok {
-		// Parse username: username.short_user_namespace-devboxname
+		// Parse username: username@short_user_namespace-devboxname
 		username, fullNamespace, devboxName, err := g.parser.Parse(conn.User())
 		if err != nil {
 			return nil, err
@@ -118,7 +118,7 @@ func (g *Gateway) NoClientAuthCallback(conn ssh.ConnMetadata) (*ssh.Permissions,
 
 	authLogger.Info("authentication attempt")
 
-	// Parse username: username.short_user_namespace-devboxname
+	// Parse username: username@short_user_namespace-devboxname
 	parsedUsername, fullNamespace, devboxName, err := g.parser.Parse(username)
 	if err != nil {
 		return nil, err
