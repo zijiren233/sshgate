@@ -37,20 +37,18 @@ func (g *Gateway) PublicKeyCallback(
 	key ssh.PublicKey,
 ) (*ssh.Permissions, error) {
 	username := conn.User()
-	fingerprint := ssh.FingerprintSHA256(key)
 
 	// Create auth logger with base fields
 	authLogger := g.logger.WithFields(log.Fields{
 		"auth_type":   "public_key",
 		"remote_addr": conn.RemoteAddr().String(),
 		"user":        username,
-		"fingerprint": fingerprint,
 	})
 
 	authLogger.Info("authentication attempt")
 
 	// Look up devbox by public key
-	info, ok := g.registry.GetByFingerprint(fingerprint)
+	info, ok := g.registry.GetByPublicKey(key)
 	if !ok {
 		// Parse username: username@short_user_namespace-devboxname
 		username, fullNamespace, devboxName, err := g.parser.Parse(conn.User())

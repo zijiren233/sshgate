@@ -131,7 +131,7 @@ func TestPublicKeyCallback_AcceptKnownKey(t *testing.T) {
 		},
 	}
 
-	if err := reg.AddSecret(secret); err != nil {
+	if err := reg.AddSecret(nil, secret); err != nil {
 		t.Fatalf("Failed to add secret to registry: %v", err)
 	}
 
@@ -246,7 +246,7 @@ func TestPublicKeyCallback_MultipleDevboxes(t *testing.T) {
 			},
 		}
 
-		if err := reg.AddSecret(secret); err != nil {
+		if err := reg.AddSecret(nil, secret); err != nil {
 			t.Fatalf("Failed to add secret for %s/%s: %v", db.namespace, db.name, err)
 		}
 
@@ -335,7 +335,7 @@ func TestPublicKeyCallback_DifferentUsernames(t *testing.T) {
 		},
 	}
 
-	if err := reg.AddSecret(secret); err != nil {
+	if err := reg.AddSecret(nil, secret); err != nil {
 		t.Fatalf("Failed to add secret: %v", err)
 	}
 
@@ -389,7 +389,7 @@ func TestGetDevboxInfoFromPermissions(t *testing.T) {
 		},
 	}
 
-	if err := reg.AddSecret(secret); err != nil {
+	if err := reg.AddSecret(nil, secret); err != nil {
 		t.Fatalf("Failed to add secret: %v", err)
 	}
 
@@ -511,7 +511,7 @@ func TestPublicKeyCallback_WithPodIP(t *testing.T) {
 		},
 	}
 
-	if err := reg.AddSecret(secret); err != nil {
+	if err := reg.AddSecret(nil, secret); err != nil {
 		t.Fatalf("Failed to add secret: %v", err)
 	}
 

@@ -26,19 +26,18 @@ const (
 
 // DevboxInfo stores information about a devbox
 type DevboxInfo struct {
-	Namespace   string
-	DevboxName  string
-	PodIP       string
-	PublicKey   ssh.PublicKey
-	PrivateKey  ssh.Signer
-	Fingerprint string
+	Namespace  string
+	DevboxName string
+	PodIP      string
+	PublicKey  ssh.PublicKey
+	PrivateKey ssh.Signer
 }
 
-// Registry manages the mapping between SSH key fingerprints and devbox pods
+// Registry manages the mapping between SSH public keys and devbox pods
 type Registry struct {
 	mu sync.RWMutex
-	// fingerprint -> DevboxInfo
-	fingerprintToDevbox map[string]*DevboxInfo
+	// publicKey (string) -> namespace/devboxName
+	publicKeyToNamespaceDevbox map[string]string
 	// namespace/devboxName -> DevboxInfo
 	devboxToInfo map[string]*DevboxInfo
 	logger       *log.Entry
@@ -47,26 +46,27 @@ type Registry struct {
 // New creates a new Registry instance
 func New() *Registry {
 	return &Registry{
-		fingerprintToDevbox: make(map[string]*DevboxInfo),
-		devboxToInfo:        make(map[string]*DevboxInfo),
-		logger:              log.WithField("component", "registry"),
+		publicKeyToNamespaceDevbox: make(map[string]string),
+		devboxToInfo:               make(map[string]*DevboxInfo),
+		logger:                     log.WithField("component", "registry"),
 	}
 }
 
-// AddSecret processes a Secret and adds it to the registry
-func (r *Registry) AddSecret(secret *corev1.Secret) error {
+// AddSecret processes a Secret and adds it to the registry.
+// If old is provided, it will clean up stale data from the old secret.
+func (r *Registry) AddSecret(oldSecret, newSecret *corev1.Secret) error {
 	// Check if this is a devbox secret
-	if secret.Labels[DevboxPartOfLabel] != DevboxPartOfValue {
+	if newSecret.Labels[DevboxPartOfLabel] != DevboxPartOfValue {
 		return nil
 	}
 
 	// Get public key from secret
-	publicKeyData, ok := secret.Data[DevboxPublicKeyField]
+	publicKeyData, ok := newSecret.Data[DevboxPublicKeyField]
 	if !ok {
 		return fmt.Errorf(
 			"secret %s/%s missing %s",
-			secret.Namespace,
-			secret.Name,
+			newSecret.Namespace,
+			newSecret.Name,
 			DevboxPublicKeyField,
 		)
 	}
@@ -80,51 +80,60 @@ func (r *Registry) AddSecret(secret *corev1.Secret) error {
 		return fmt.Errorf("failed to parse public key: %w", err)
 	}
 
-	// Calculate fingerprint
-	fingerprint := ssh.FingerprintSHA256(publicKey)
-
 	// Get devbox name from ownerReferences
-	devboxName := getDevboxNameFromOwnerReferences(secret.OwnerReferences)
+	devboxName := getDevboxNameFromOwnerReferences(newSecret.OwnerReferences)
 	if devboxName == "" {
-		return fmt.Errorf("secret %s/%s has no Devbox owner", secret.Namespace, secret.Name)
+		return fmt.Errorf("secret %s/%s has no Devbox owner", newSecret.Namespace, newSecret.Name)
 	}
 
 	// Parse private key if available
 	var privateKey ssh.Signer
-	if privateKeyData, ok := secret.Data[DevboxPrivateKeyField]; ok {
+	if privateKeyData, ok := newSecret.Data[DevboxPrivateKeyField]; ok {
 		privateKey, err = ssh.ParsePrivateKey(privateKeyData)
 		if err != nil {
 			r.logger.WithFields(log.Fields{
-				"namespace": secret.Namespace,
+				"namespace": newSecret.Namespace,
 				"devbox":    devboxName,
 			}).WithError(err).Warn("Failed to parse private key")
 		}
 	}
 
-	key := fmt.Sprintf("%s/%s", secret.Namespace, devboxName)
+	devboxKey := fmt.Sprintf("%s/%s", newSecret.Namespace, devboxName)
+	pubKeyStr := string(publicKey.Marshal())
 
 	r.logger.WithFields(log.Fields{
-		"namespace":   secret.Namespace,
-		"devbox":      devboxName,
-		"fingerprint": fingerprint,
+		"namespace": newSecret.Namespace,
+		"devbox":    devboxName,
 	}).Info("Adding secret")
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	info, exists := r.devboxToInfo[key]
+	// Clean up old public key mapping if old secret provided
+	if oldSecret != nil {
+		if oldKeyData, ok := oldSecret.Data[DevboxPublicKeyField]; ok {
+			oldFirstLine := bytes.SplitN(oldKeyData, []byte("\n"), 2)[0]
+			if oldPubKey, _, _, _, err := ssh.ParseAuthorizedKey(oldFirstLine); err == nil {
+				oldPubKeyStr := string(oldPubKey.Marshal())
+				if oldPubKeyStr != pubKeyStr {
+					delete(r.publicKeyToNamespaceDevbox, oldPubKeyStr)
+				}
+			}
+		}
+	}
+
+	info, exists := r.devboxToInfo[devboxKey]
 	if !exists {
 		info = &DevboxInfo{
-			Namespace:  secret.Namespace,
+			Namespace:  newSecret.Namespace,
 			DevboxName: devboxName,
 		}
-		r.devboxToInfo[key] = info
+		r.devboxToInfo[devboxKey] = info
 	}
 
 	info.PublicKey = publicKey
 	info.PrivateKey = privateKey
-	info.Fingerprint = fingerprint
-	r.fingerprintToDevbox[fingerprint] = info
+	r.publicKeyToNamespaceDevbox[pubKeyStr] = devboxKey
 
 	return nil
 }
@@ -146,12 +155,15 @@ func (r *Registry) DeleteSecret(secret *corev1.Secret) {
 	defer r.mu.Unlock()
 
 	if info, ok := r.devboxToInfo[key]; ok {
-		delete(r.fingerprintToDevbox, info.Fingerprint)
+		if info.PublicKey != nil {
+			delete(r.publicKeyToNamespaceDevbox, string(info.PublicKey.Marshal()))
+		}
+
 		delete(r.devboxToInfo, key)
 	}
 }
 
-// UpdatePod updates the pod IP for a devbox
+// UpdatePod updates the pod IP for a devbox.
 func (r *Registry) UpdatePod(pod *corev1.Pod) error {
 	// Check if this is a devbox pod
 	if pod.Labels[DevboxPartOfLabel] != DevboxPartOfValue {
@@ -164,12 +176,8 @@ func (r *Registry) UpdatePod(pod *corev1.Pod) error {
 		return fmt.Errorf("pod %s/%s has no Devbox owner", pod.Namespace, pod.Name)
 	}
 
-	// Get pod IP
-	if pod.Status.PodIP == "" {
-		return nil // Pod not ready yet
-	}
-
 	key := fmt.Sprintf("%s/%s", pod.Namespace, devboxName)
+
 	r.logger.WithFields(log.Fields{
 		"namespace": pod.Namespace,
 		"devbox":    devboxName,
@@ -188,6 +196,7 @@ func (r *Registry) UpdatePod(pod *corev1.Pod) error {
 		r.devboxToInfo[key] = info
 	}
 
+	// Update PodIP even if empty (pod may be restarting)
 	info.PodIP = pod.Status.PodIP
 
 	return nil
@@ -214,12 +223,17 @@ func (r *Registry) DeletePod(pod *corev1.Pod) {
 	}
 }
 
-// GetByFingerprint retrieves DevboxInfo by SSH key fingerprint
-func (r *Registry) GetByFingerprint(fingerprint string) (*DevboxInfo, bool) {
+// GetByPublicKey retrieves DevboxInfo by SSH public key
+func (r *Registry) GetByPublicKey(publicKey ssh.PublicKey) (*DevboxInfo, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	info, ok := r.fingerprintToDevbox[fingerprint]
+	key, ok := r.publicKeyToNamespaceDevbox[string(publicKey.Marshal())]
+	if !ok {
+		return nil, false
+	}
+
+	info, ok := r.devboxToInfo[key]
 
 	return info, ok
 }

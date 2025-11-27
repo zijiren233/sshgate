@@ -106,7 +106,7 @@ func TestAddSecret(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := r.AddSecret(tt.secret)
+			err := r.AddSecret(nil, tt.secret)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("AddSecret() error = %v, wantErr %v", err, tt.wantErr)
 			}
@@ -114,11 +114,9 @@ func TestAddSecret(t *testing.T) {
 	}
 
 	// Verify the valid secret was added
-	fingerprint := ssh.FingerprintSHA256(pubKey)
-
-	info, ok := r.GetByFingerprint(fingerprint)
+	info, ok := r.GetByPublicKey(pubKey)
 	if !ok {
-		t.Fatal("Failed to get devbox by fingerprint")
+		t.Fatal("Failed to get devbox by public key")
 	}
 
 	if info.Namespace != "test-ns" {
@@ -155,7 +153,7 @@ func TestDeleteSecret(t *testing.T) {
 	}
 
 	// Add secret
-	if err := r.AddSecret(secret); err != nil {
+	if err := r.AddSecret(nil, secret); err != nil {
 		t.Fatalf("Failed to add secret: %v", err)
 	}
 
@@ -164,9 +162,7 @@ func TestDeleteSecret(t *testing.T) {
 
 	// Verify it's deleted
 	pubKey, _, _, _, _ := ssh.ParseAuthorizedKey(pubBytes)
-
-	fingerprint := ssh.FingerprintSHA256(pubKey)
-	if _, ok := r.GetByFingerprint(fingerprint); ok {
+	if _, ok := r.GetByPublicKey(pubKey); ok {
 		t.Error("Secret was not deleted from registry")
 	}
 }
@@ -248,7 +244,7 @@ func TestUpdatePod(t *testing.T) {
 	}
 }
 
-func TestGetByFingerprint(t *testing.T) {
+func TestGetByPublicKey(t *testing.T) {
 	r := registry.New()
 	pubKey, pubBytes, privBytes := generateTestKeyPair(t)
 
@@ -272,26 +268,26 @@ func TestGetByFingerprint(t *testing.T) {
 		},
 	}
 
-	if err := r.AddSecret(secret); err != nil {
+	if err := r.AddSecret(nil, secret); err != nil {
 		t.Fatalf("Failed to add secret: %v", err)
 	}
 
-	fingerprint := ssh.FingerprintSHA256(pubKey)
-
-	// Test getting existing fingerprint
-	info, ok := r.GetByFingerprint(fingerprint)
+	// Test getting existing public key
+	info, ok := r.GetByPublicKey(pubKey)
 	if !ok {
-		t.Fatal("GetByFingerprint() returned false for existing fingerprint")
+		t.Fatal("GetByPublicKey() returned false for existing public key")
 	}
 
 	if info.DevboxName != "test-devbox" {
 		t.Errorf("DevboxName = %s, want test-devbox", info.DevboxName)
 	}
 
-	// Test getting non-existent fingerprint
-	_, ok = r.GetByFingerprint("SHA256:nonexistent")
+	// Test getting non-existent public key
+	otherPubKey, _, _ := generateTestKeyPair(t)
+
+	_, ok = r.GetByPublicKey(otherPubKey)
 	if ok {
-		t.Error("GetByFingerprint() returned true for non-existent fingerprint")
+		t.Error("GetByPublicKey() returned true for non-existent public key")
 	}
 }
 
@@ -323,7 +319,7 @@ func TestConcurrentAccess(t *testing.T) {
 	done := make(chan bool, 10)
 	for range 10 {
 		go func() {
-			if err := r.AddSecret(secret); err != nil {
+			if err := r.AddSecret(nil, secret); err != nil {
 				t.Errorf("AddSecret failed: %v", err)
 			}
 
@@ -338,11 +334,10 @@ func TestConcurrentAccess(t *testing.T) {
 
 	// Concurrent reads
 	pubKey, _, _, _, _ := ssh.ParseAuthorizedKey(pubBytes)
-	fingerprint := ssh.FingerprintSHA256(pubKey)
 
 	for range 10 {
 		go func() {
-			r.GetByFingerprint(fingerprint)
+			r.GetByPublicKey(pubKey)
 
 			done <- true
 		}()

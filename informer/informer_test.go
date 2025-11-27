@@ -88,9 +88,8 @@ func TestProcessSecretAdd(t *testing.T) {
 
 	// Verify secret was added to registry
 	pubKey, _, _, _, _ := ssh.ParseAuthorizedKey(pubBytes)
-	fingerprint := ssh.FingerprintSHA256(pubKey)
 
-	info, ok := reg.GetByFingerprint(fingerprint)
+	info, ok := reg.GetByPublicKey(pubKey)
 	if !ok {
 		t.Fatal("Secret was not added to registry")
 	}
@@ -134,9 +133,8 @@ func TestProcessSecretUpdate(t *testing.T) {
 
 	// Verify secret was updated in registry
 	pubKey, _, _, _, _ := ssh.ParseAuthorizedKey(pubBytes)
-	fingerprint := ssh.FingerprintSHA256(pubKey)
 
-	_, ok := reg.GetByFingerprint(fingerprint)
+	_, ok := reg.GetByPublicKey(pubKey)
 	if !ok {
 		t.Fatal("Secret was not updated in registry")
 	}
@@ -175,10 +173,9 @@ func TestProcessSecretDelete(t *testing.T) {
 	}
 
 	pubKey, _, _, _, _ := ssh.ParseAuthorizedKey(pubBytes)
-	fingerprint := ssh.FingerprintSHA256(pubKey)
 
 	// Verify it exists
-	_, ok := reg.GetByFingerprint(fingerprint)
+	_, ok := reg.GetByPublicKey(pubKey)
 	if !ok {
 		t.Fatal("Secret was not added")
 	}
@@ -189,7 +186,7 @@ func TestProcessSecretDelete(t *testing.T) {
 	}
 
 	// Verify it's deleted
-	_, ok = reg.GetByFingerprint(fingerprint)
+	_, ok = reg.GetByPublicKey(pubKey)
 	if ok {
 		t.Error("Secret was not deleted from registry")
 	}

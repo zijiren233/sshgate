@@ -37,6 +37,7 @@ func (g *Gateway) proxyChannelWithRequests(
 	// Proxy data in both directions
 	var copyWg sync.WaitGroup
 	copyWg.Go(func() { _, _ = io.Copy(channel, backendChannel) })
+
 	_, _ = io.Copy(backendChannel, channel)
 
 	// Wait for data copy to complete
@@ -66,5 +67,6 @@ func (g *Gateway) proxyChannelToConn(channel ssh.Channel, conn net.Conn) {
 	_ = conn.Close()
 
 	wg.Wait()
+
 	_ = channel.Close()
 }

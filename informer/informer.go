@@ -131,10 +131,8 @@ func (m *Manager) ProcessSecret(secret *corev1.Secret, action string) error {
 // ProcessPod processes a pod (for testing)
 func (m *Manager) ProcessPod(pod *corev1.Pod, action string) error {
 	switch action {
-	case "add":
+	case "add", "update":
 		m.handlePodAdd(pod)
-	case "update":
-		m.handlePodUpdate(nil, pod)
 	case "delete":
 		m.handlePodDelete(pod)
 	default:
@@ -152,19 +150,32 @@ func (m *Manager) handleSecretAdd(obj any) {
 		return
 	}
 
-	if err := m.registry.AddSecret(secret); err != nil {
+	if err := m.registry.AddSecret(nil, secret); err != nil {
 		m.logger.WithError(err).Error("Error adding secret")
 	}
 }
 
 func (m *Manager) handleSecretUpdate(oldObj, newObj any) {
-	secret, ok := newObj.(*corev1.Secret)
+	var oldSecret *corev1.Secret
+	if oldObj != nil {
+		var ok bool
+
+		oldSecret, ok = oldObj.(*corev1.Secret)
+		if !ok {
+			m.logger.WithField("type", fmt.Sprintf("%T", oldObj)).
+				Error("Expected *corev1.Secret for old object")
+			return
+		}
+	}
+
+	newSecret, ok := newObj.(*corev1.Secret)
 	if !ok {
-		m.logger.WithField("type", fmt.Sprintf("%T", newObj)).Error("Expected *corev1.Secret")
+		m.logger.WithField("type", fmt.Sprintf("%T", newObj)).
+			Error("Expected *corev1.Secret for new object")
 		return
 	}
 
-	if err := m.registry.AddSecret(secret); err != nil {
+	if err := m.registry.AddSecret(oldSecret, newSecret); err != nil {
 		m.logger.WithError(err).Error("Error updating secret")
 	}
 }
@@ -192,7 +203,7 @@ func (m *Manager) handlePodAdd(obj any) {
 	}
 }
 
-func (m *Manager) handlePodUpdate(oldObj, newObj any) {
+func (m *Manager) handlePodUpdate(_, newObj any) {
 	pod, ok := newObj.(*corev1.Pod)
 	if !ok {
 		m.logger.WithField("type", fmt.Sprintf("%T", newObj)).Error("Expected *corev1.Pod")
