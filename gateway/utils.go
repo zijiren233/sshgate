@@ -27,24 +27,9 @@ func (g *Gateway) proxyChannelWithRequests(
 	channel, backendChannel ssh.Channel,
 	clientReqs, backendReqs <-chan *ssh.Request,
 ) {
-	backendReqsDone := sync.WaitGroup{}
-	backendReqsDone.Go(func() {
-		g.proxyRequests(clientReqs, backendChannel)
-		_ = backendChannel.Close()
-	})
-
-	// Forward requests from backend to client (includes exit-status/exit-signal)
-	// We need to wait for this to complete before closing client channel
-	backendReqsDone.Go(func() {
-		g.proxyRequests(backendReqs, channel)
-		_ = channel.Close()
-	})
-
-	// Proxy data in both directions
-
+	// Client to backend: requests and data
 	go func() {
-		_, _ = io.Copy(channel, backendChannel)
-		_ = channel.CloseWrite()
+		g.proxyRequests(clientReqs, backendChannel)
 	}()
 
 	go func() {
@@ -52,9 +37,20 @@ func (g *Gateway) proxyChannelWithRequests(
 		_ = backendChannel.CloseWrite()
 	}()
 
-	// Wait for backend->client request forwarding to complete
-	// This ensures exit-status/exit-signal is sent before closing client channel
-	backendReqsDone.Wait()
+	// Backend to client: wait for both data and requests before CloseWrite
+	var backendToClientWg sync.WaitGroup
+
+	backendToClientWg.Go(func() {
+		_, _ = io.Copy(channel, backendChannel)
+		_ = channel.CloseWrite()
+	})
+
+	backendToClientWg.Go(func() {
+		g.proxyRequests(backendReqs, channel)
+	})
+
+	// Wait for backend->client to complete (data + exit-status)
+	backendToClientWg.Wait()
 }
 
 // proxyChannelToConn proxies data between an SSH channel and a net.Conn

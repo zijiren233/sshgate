@@ -97,6 +97,7 @@ func (g *Gateway) handleChannelPublicKey(
 		_ = newChannel.Reject(ssh.ConnectionFailed, err.Error())
 		return
 	}
+	defer backendChannel.Close()
 
 	channel, requests, err := newChannel.Accept()
 	if err != nil {
@@ -104,6 +105,7 @@ func (g *Gateway) handleChannelPublicKey(
 		backendChannel.Close()
 		return
 	}
+	defer channel.Close()
 
 	channelLogger.Debug("Channel established")
 
