@@ -22,37 +22,51 @@ func (g *Gateway) proxyRequests(in <-chan *ssh.Request, out ssh.Channel) {
 }
 
 // proxyChannelWithRequests proxies data between two SSH channels while also
-// forwarding requests. It ensures that request forwarding completes before
-// closing channels to prevent race conditions where exit-status is lost.
+// forwarding requests. It ensures that exit-status is forwarded before closing.
 func (g *Gateway) proxyChannelWithRequests(
 	channel, backendChannel ssh.Channel,
 	clientReqs, backendReqs <-chan *ssh.Request,
 ) {
-	var wg sync.WaitGroup
+	// Forward requests from client to backend (fire and forget)
+	go g.proxyRequests(clientReqs, backendChannel)
 
-	// Start request forwarding goroutines
-	wg.Go(func() { g.proxyRequests(clientReqs, backendChannel) })
-	wg.Go(func() { g.proxyRequests(backendReqs, channel) })
+	// Forward requests from backend to client (includes exit-status)
+	// We need to wait for this to complete before closing client channel
+	backendReqsDone := make(chan struct{})
+	go func() {
+		g.proxyRequests(backendReqs, channel)
+		close(backendReqsDone)
+	}()
 
 	// Proxy data in both directions
-	var copyWg sync.WaitGroup
-	copyWg.Go(func() { _, _ = io.Copy(channel, backendChannel) })
+	var once sync.Once
+	done := make(chan struct{})
+	closeDone := func() { once.Do(func() { close(done) }) }
 
-	_, _ = io.Copy(backendChannel, channel)
+	go func() {
+		_, _ = io.Copy(channel, backendChannel)
+		_ = channel.CloseWrite()
+		closeDone()
+	}()
 
-	// Wait for data copy to complete
-	copyWg.Wait()
+	go func() {
+		_, _ = io.Copy(backendChannel, channel)
+		_ = backendChannel.CloseWrite()
+		closeDone()
+	}()
 
-	// Close write sides to signal EOF, allowing request handlers to finish
-	_ = channel.CloseWrite()
-	_ = backendChannel.CloseWrite()
+	// Wait for either direction's data copy to complete
+	<-done
 
-	// Wait for all request forwarding to complete before closing channels
-	wg.Wait()
-
-	// Now safe to close channels
-	_ = channel.Close()
+	// Close backend channel first - this closes backendReqs channel,
+	// allowing the request forwarding goroutine to finish and forward exit-status
 	_ = backendChannel.Close()
+
+	// Wait for backend->client request forwarding to complete (ensures exit-status is sent)
+	<-backendReqsDone
+
+	// Now safe to close client channel
+	_ = channel.Close()
 }
 
 // proxyChannelToConn proxies data between an SSH channel and a net.Conn
