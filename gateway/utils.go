@@ -5,17 +5,24 @@ import (
 	"net"
 	"sync"
 
+	log "github.com/sirupsen/logrus"
 	"golang.org/x/crypto/ssh"
 )
 
 func (g *Gateway) proxyRequests(in <-chan *ssh.Request, out ssh.Channel) {
 	for req := range in {
+		log.WithFields(log.Fields{
+			"type":       req.Type,
+			"want_reply": req.WantReply,
+		}).Debug("Forwarding request")
+
 		ok, err := out.SendRequest(req.Type, req.WantReply, req.Payload)
 		if req.WantReply {
 			_ = req.Reply(ok, nil)
 		}
 
 		if err != nil {
+			log.WithError(err).WithField("type", req.Type).Warn("Failed to forward request")
 			return
 		}
 	}
@@ -30,10 +37,14 @@ func (g *Gateway) proxyChannelWithRequests(
 	// Forward requests from client to backend (fire and forget)
 	go g.proxyRequests(clientReqs, backendChannel)
 
-	// Forward requests from backend to client (includes exit-status)
+	// Forward requests from backend to client (includes exit-status/exit-signal)
 	// We need to wait for this to complete before closing client channel
-	backendReqsDone := sync.WaitGroup{}
-	backendReqsDone.Go(func() { g.proxyRequests(backendReqs, channel) })
+	backendReqsDone := make(chan struct{})
+	go func() {
+		g.proxyRequests(backendReqs, channel)
+		log.Debug("Backend requests forwarding completed")
+		close(backendReqsDone)
+	}()
 
 	// Proxy data in both directions
 	var once sync.Once
@@ -43,29 +54,32 @@ func (g *Gateway) proxyChannelWithRequests(
 
 	go func() {
 		_, _ = io.Copy(channel, backendChannel)
-		_ = channel.CloseWrite()
-
+		log.Debug("Backend -> Client data copy completed")
 		closeDone()
 	}()
 
 	go func() {
 		_, _ = io.Copy(backendChannel, channel)
-		_ = backendChannel.CloseWrite()
-
+		log.Debug("Client -> Backend data copy completed")
 		closeDone()
 	}()
 
 	// Wait for either direction's data copy to complete
 	<-done
+	log.Debug("Data copy done, sending EOF")
 
-	// Close backend channel first - this closes backendReqs channel,
-	// allowing the request forwarding goroutine to finish and forward exit-status
+	// Send EOF to both directions
+	_ = channel.CloseWrite()
+	_ = backendChannel.CloseWrite()
+
+	log.Debug("Waiting for backend requests to complete")
+	// Wait for backend->client request forwarding to complete
+	// This ensures exit-status/exit-signal is sent before closing client channel
+	<-backendReqsDone
+
+	log.Debug("Closing channels")
+	// Now safe to close channels
 	_ = backendChannel.Close()
-
-	// Wait for backend->client request forwarding to complete (ensures exit-status is sent)
-	backendReqsDone.Wait()
-
-	// Now safe to close client channel
 	_ = channel.Close()
 }
 
