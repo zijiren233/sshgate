@@ -32,26 +32,26 @@ func (g *Gateway) proxyChannelWithRequests(
 
 	// Forward requests from backend to client (includes exit-status)
 	// We need to wait for this to complete before closing client channel
-	backendReqsDone := make(chan struct{})
-	go func() {
-		g.proxyRequests(backendReqs, channel)
-		close(backendReqsDone)
-	}()
+	backendReqsDone := sync.WaitGroup{}
+	backendReqsDone.Go(func() { g.proxyRequests(backendReqs, channel) })
 
 	// Proxy data in both directions
 	var once sync.Once
+
 	done := make(chan struct{})
 	closeDone := func() { once.Do(func() { close(done) }) }
 
 	go func() {
 		_, _ = io.Copy(channel, backendChannel)
 		_ = channel.CloseWrite()
+
 		closeDone()
 	}()
 
 	go func() {
 		_, _ = io.Copy(backendChannel, channel)
 		_ = backendChannel.CloseWrite()
+
 		closeDone()
 	}()
 
@@ -63,7 +63,7 @@ func (g *Gateway) proxyChannelWithRequests(
 	_ = backendChannel.Close()
 
 	// Wait for backend->client request forwarding to complete (ensures exit-status is sent)
-	<-backendReqsDone
+	backendReqsDone.Wait()
 
 	// Now safe to close client channel
 	_ = channel.Close()
